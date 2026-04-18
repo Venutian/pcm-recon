@@ -45,15 +45,15 @@
     <span class="count">{data.length.toLocaleString()} / {$allCyclists.length.toLocaleString()} riders</span>
   </div>
   <div class="table-wrap">
-    <RiderTable {data} cols={COLS} prefix="a" />
+    <RiderTable {data} cols={COLS} />
   </div>
 </div>
 
 <style>
   .allr { display:flex; flex-direction:column; height:100%; overflow:hidden; }
   .toolbar { display:flex; align-items:center; gap:10px; padding:10px 16px;
-             background:#0d1525; border-bottom:1px solid #111c30; flex-shrink:0; }
-  .flbl { font-size:9px; font-weight:700; color:#3a4e72; letter-spacing:0.1em; text-transform:uppercase; }
-  .count { margin-left:auto; font-size:11px; color:#3a4e72; }
+             background:#111c30; border-bottom:1px solid #253550; flex-shrink:0; }
+  .flbl { font-size:9px; font-weight:700; color:#4a5e80; letter-spacing:0.1em; text-transform:uppercase; }
+  .count { margin-left:auto; font-size:11px; color:#4a5e80; }
   .table-wrap { flex:1; overflow:hidden; }
 </style>

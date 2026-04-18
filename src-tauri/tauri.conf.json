@@ -26,9 +26,7 @@
     ],
     "security": { "csp": null }
   },
-  "plugins": {
-    "dialog": {}
-  },
+  "plugins": {},
   "bundle": {
     "active": true,
     "targets": "all",

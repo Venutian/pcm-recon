@@ -47,15 +47,15 @@
     <span class="count">{data.length.toLocaleString()} free agents</span>
   </div>
   <div class="table-wrap">
-    <RiderTable {data} cols={COLS} prefix="fm" />
+    <RiderTable {data} cols={COLS} />
   </div>
 </div>
 
 <style>
   .fm { display:flex; flex-direction:column; height:100%; overflow:hidden; }
   .toolbar { display:flex; align-items:center; gap:6px; padding:10px 16px;
-             background:#0d1525; border-bottom:1px solid #111c30; flex-shrink:0; flex-wrap:wrap; }
-  .flbl { font-size:9px; font-weight:700; color:#3a4e72; letter-spacing:0.1em; text-transform:uppercase; }
-  .count { margin-left:auto; font-size:11px; color:#3a4e72; }
+             background:#111c30; border-bottom:1px solid #253550; flex-shrink:0; flex-wrap:wrap; }
+  .flbl { font-size:9px; font-weight:700; color:#4a5e80; letter-spacing:0.1em; text-transform:uppercase; }
+  .count { margin-left:auto; font-size:11px; color:#4a5e80; }
   .table-wrap { flex:1; overflow:hidden; }
 </style>

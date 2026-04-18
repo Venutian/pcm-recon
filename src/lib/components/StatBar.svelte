@@ -7,8 +7,8 @@
     if (v >= 90) return "#ffd700";
     if (v >= 80) return "#c8e857";
     if (v >= 70) return "#2ecc82";
-    if (v >= 55) return "#4d88f5";
-    return "#3a4e72";
+    if (v >= 55) return "#e8b800";
+    return "#4a5e80";
   }
   $: col = barColor(cur);
 </script>

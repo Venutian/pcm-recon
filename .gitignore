@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.vite/
+
+# Tauri build
+src-tauri/target/
+src-tauri/WixTools/
+
+# PCM save files
+*.cdb
+*.bkp
+*.cdi
+
+# User data
+pcm_recon_notes.json
+
+# IDE
+.idea/
+.vscode/settings.json
+*.suo

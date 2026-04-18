@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where claude *)",
+      "Bash(npm list *)"
+    ]
+  }
+}

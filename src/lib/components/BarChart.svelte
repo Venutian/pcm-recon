@@ -1,7 +1,7 @@
 <script lang="ts">
   export let data: { label: string; value: number; color?: string }[] = [];
   export let title = "";
-  export let defaultColor = "#4d88f5";
+  export let defaultColor = "#e8b800";
 
   let width = 400;
   let height = 300;

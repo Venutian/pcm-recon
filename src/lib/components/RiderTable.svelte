@@ -6,7 +6,6 @@
 
   export let data: Cyclist[] = [];
   export let cols: Col[] = [];
-  export let prefix = "r";
   export let rowHeight = 36;
 
   let container: HTMLDivElement;
@@ -35,8 +34,8 @@
     else { sortKey = key; sortDir = -1; }
     const dir = sortDir;
     data = [...data].sort((a, b) => {
-      const av = (a as Record<string,unknown>)[key];
-      const bv = (b as Record<string,unknown>)[key];
+      const av = (a as unknown as Record<string,unknown>)[key];
+      const bv = (b as unknown as Record<string,unknown>)[key];
       if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
       return String(av).localeCompare(String(bv)) * dir;
     });
@@ -45,6 +44,16 @@
   function gradeStyle(g: string): string {
     const c = GRADE_COLOR[g] ?? "#6478a0";
     return `color:${c}; font-weight:700; font-size:11px;`;
+  }
+
+  function cellVal(c: Cyclist, key: string): unknown {
+    return (c as unknown as Record<string,unknown>)[key];
+  }
+
+  function resize(node: Element, callback: (e: ResizeObserverEntry[]) => void) {
+    const ro = new ResizeObserver(callback);
+    ro.observe(node);
+    return { destroy() { ro.disconnect(); } };
   }
 </script>
 
@@ -55,7 +64,7 @@
       <tr>
         {#each cols as col}
           <th style="width:{col.width}px; text-align:{col.align??'left'}"
-              on:click={() => sortBy(col.key as string)}>
+              on:click={() => sortBy(col.key)}>
             {col.label}{sortKey===col.key ? (sortDir===-1?" ↓":" ↑") : ""}
           </th>
         {/each}
@@ -78,16 +87,15 @@
               {:else if col.key === "rider_type"}
                 {c.rider_type}
               {:else}
-                {col.fmt ? col.fmt((c as Record<string,unknown>)[col.key as string], c) : valFor(c, col.key as string)}
+                {col.fmt ? col.fmt(cellVal(c, col.key), c) : valFor(c, col.key)}
               {/if}
             </td>
           {/each}
         </tr>
       {/each}
       <!-- spacer bottom -->
-      {@const bottomPad = total - offsetY - visible.length * rowHeight}
-      {#if bottomPad > 0}
-        <tr style="height:{bottomPad}px"><td colspan={cols.length}></td></tr>
+      {#if total - offsetY - visible.length * rowHeight > 0}
+        <tr style="height:{total - offsetY - visible.length * rowHeight}px"><td colspan={cols.length}></td></tr>
       {/if}
     </tbody>
   </table>
@@ -101,12 +109,3 @@
   }
   tr.selected td { background: #1a2d50 !important; }
 </style>
-
-<script context="module">
-  // svelte action for ResizeObserver
-  export function resize(node: Element, callback: (e: ResizeObserverEntry[]) => void) {
-    const ro = new ResizeObserver(callback);
-    ro.observe(node);
-    return { destroy() { ro.disconnect(); } };
-  }
-</script>

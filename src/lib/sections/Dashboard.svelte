@@ -28,21 +28,21 @@
     const m: Record<string,number> = {};
     $allCyclists.forEach(c => { m[c.rider_type] = (m[c.rider_type]??0)+1; });
     return Object.entries(m).sort((a,b)=>b[1]-a[1])
-      .map(([l,v]) => ({ label:l, value:v, color: TYPE_COLORS[l]??"#4d88f5" }));
+      .map(([l,v]) => ({ label:l, value:v, color: TYPE_COLORS[l]??"#e8b800" }));
   })();
 
   $: natData = (() => {
     const m: Record<string,number> = {};
     $allCyclists.forEach(c => { if(c.nationality && c.nationality!=="Unknown") m[c.nationality]=(m[c.nationality]??0)+1; });
     return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,18)
-      .map(([l,v]) => ({ label:l, value:v, color:"#4d88f5" }));
+      .map(([l,v]) => ({ label:l, value:v, color:"#e8b800" }));
   })();
 </script>
 
 <div class="dash section-enter">
   <!-- Cards -->
   <div class="cards">
-    <SummaryCard title="Total Riders"  value={n?String(n):"—"}      sub="{nats} nationalities"   accent="#4d88f5" tip="All riders in this save" />
+    <SummaryCard title="Total Riders"  value={n?String(n):"—"}      sub="{nats} nationalities"   accent="#e8b800" tip="All riders in this save" />
     <SummaryCard title="Teams"         value={String($teams.length)} sub="Active rosters"          accent="#e87848" />
     <SummaryCard title="Free Agents"   value={String(fa)}            sub="Available now"           accent="#2ecc82" />
     <SummaryCard title="Top Prospects" value={String(wk)}            sub="Wonderkids + Elite"      accent="#ffd700" />
@@ -57,7 +57,7 @@
     <div class="card-block">
       <div class="block-hdr">TOP 15 RIDERS BY CURRENT ABILITY</div>
       <div class="table-wrap">
-        <RiderTable data={top15} cols={dashCols} prefix="d" />
+        <RiderTable data={top15} cols={dashCols} />
       </div>
     </div>
 

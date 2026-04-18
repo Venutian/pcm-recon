@@ -5,7 +5,13 @@ use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 fn load_save(path: String) -> Result<SaveData, String> {
-    parser::extract(&path)
+    eprintln!("[load_save] path = {:?}", path);
+    let result = parser::extract(&path);
+    match &result {
+        Ok(d)  => eprintln!("[load_save] OK: {} cyclists, {} teams", d.cyclists.len(), d.teams.len()),
+        Err(e) => eprintln!("[load_save] ERR: {}", e),
+    }
+    result
 }
 
 #[tauri::command]
@@ -14,7 +20,8 @@ fn open_save_dialog(app: tauri::AppHandle) -> Option<String> {
         .file()
         .add_filter("PCM Save File", &["cdb"])
         .blocking_pick_file()
-        .map(|p| p.to_string())
+        .and_then(|p| p.into_path().ok())
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 #[tauri::command]

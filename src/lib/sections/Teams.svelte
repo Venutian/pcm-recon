@@ -58,14 +58,14 @@
         <span class="t-short">({selected.short})</span>
       </div>
       <div class="stat-cards">
-        <SummaryCard title="Riders"   value={String(roster.length)} sub="Total squad"       accent="#4d88f5" />
+        <SummaryCard title="Riders"   value={String(roster.length)} sub="Total squad"       accent="#e8b800" />
         <SummaryCard title="Avg CA"   value={String(avgCA)}         sub="Mean current ability" accent="#2ecc82" />
         <SummaryCard title="Best CA"  value={best ? String(best.current_ability):"—"} sub={best?.name??"—"} accent="#ffd700" />
         <SummaryCard title="Top Type" value={topType}               sub="Most common type"  accent="#9470f0" />
         <SummaryCard title="Free"     value={String(roster.filter(r=>r.free_agent).length)} sub="Free agents in squad" accent="#e87848" />
       </div>
       <div class="roster-table">
-        <RiderTable data={roster} cols={COLS} prefix="t" />
+        <RiderTable data={roster} cols={COLS} />
       </div>
     {/if}
   </div>
@@ -73,18 +73,18 @@
 
 <style>
   .teams { display:grid; grid-template-columns:260px 1fr; height:100%; overflow:hidden; }
-  .team-list { background:#0d1525; border-right:1px solid #1e2d4a; display:flex; flex-direction:column; overflow:hidden; }
-  .list-hdr { padding:12px 14px 4px; font-size:10px; font-weight:700; color:#3a4e72; letter-spacing:0.1em; flex-shrink:0; }
+  .team-list { background:#111c30; border-right:1px solid #253550; display:flex; flex-direction:column; overflow:hidden; }
+  .list-hdr { padding:12px 14px 4px; font-size:10px; font-weight:700; color:#4a5e80; letter-spacing:0.1em; flex-shrink:0; }
   .list-scroll { flex:1; overflow-y:auto; }
   .team-btn { display:flex; align-items:center; gap:8px; width:100%; padding:9px 14px;
-              background:none; border:none; color:#6478a0; cursor:pointer; text-align:left; transition:background 0.1s; }
-  .team-btn:hover { background:#111c30; color:#dce8ff; }
-  .team-btn.active { background:#142040; color:#4d88f5; }
+              background:none; border:none; color:#7284a8; cursor:pointer; text-align:left; transition:background 0.1s; }
+  .team-btn:hover { background:#172035; color:#dce8ff; }
+  .team-btn.active { background:#1e2a10; color:#e8b800; }
   .t-flag { font-size:16px; flex-shrink:0; }
   .t-name { flex:1; font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .t-count { font-size:10px; color:#3a4e72; }
+  .t-count { font-size:10px; color:#4a5e80; }
   .detail { display:flex; flex-direction:column; overflow:hidden; padding:16px; gap:14px; }
-  .no-sel { display:flex; align-items:center; justify-content:center; height:100%; color:#3a4e72; }
+  .no-sel { display:flex; align-items:center; justify-content:center; height:100%; color:#4a5e80; }
   .team-hdr { display:flex; align-items:center; gap:10px; flex-shrink:0; }
   .t-flag2 { font-size:28px; }
   .t-hname { font-size:20px; font-weight:700; color:#dce8ff; }

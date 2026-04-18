@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for PCM Recon",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}

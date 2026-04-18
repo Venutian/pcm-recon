@@ -2,7 +2,7 @@
   export let title = "";
   export let value = "—";
   export let sub   = "";
-  export let accent = "#4d88f5";
+  export let accent = "#e8b800";
   export let tip   = "";
 </script>
 

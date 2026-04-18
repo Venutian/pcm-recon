@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { allCyclists, shortlistIds, currentPath, filtered } from "../stores";
+  import { allCyclists, shortlistIds } from "../stores";
   import RiderTable from "../components/RiderTable.svelte";
   import type { Col } from "../types";
   import { fmtNat } from "../format";
   import { invoke } from "@tauri-apps/api/core";
+  import { save } from "@tauri-apps/plugin-dialog";
 
   const COLS: Col[] = [
     { key:"name",            label:"Name",    width:200, align:"left" },
@@ -32,7 +33,6 @@
     if (!data.length) return;
     const fields = ["name","nationality","iso","team","age","rider_type","current_ability",
                     "potential","growth","scout_grade","flat","mountain","timetrial","sprint","cobble"];
-    const { save } = await import("@tauri-apps/plugin-dialog");
     const path = await save({ filters:[{name:"CSV",extensions:["csv"]}], defaultPath:"pcm_shortlist.csv" }).catch(()=>null);
     if (!path) return;
     await invoke("export_csv", { path, data, fields }).catch(e=>alert("Export failed: "+e));
@@ -55,7 +55,7 @@
     </div>
   {:else}
     <div class="table-wrap">
-      <RiderTable {data} cols={COLS} prefix="sl" />
+      <RiderTable {data} cols={COLS} />
     </div>
   {/if}
 </div>

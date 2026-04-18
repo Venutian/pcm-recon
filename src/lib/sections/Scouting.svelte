@@ -56,48 +56,47 @@
   $: agents = $filtered.filter(c => c.free_agent);
 
   let tab = 0;
-  let sortKey = "current_ability";
 </script>
 
 <div class="scout section-enter">
   <!-- Filter bar -->
   <div class="filter-bar">
     <div class="fg">
-      <label class="flbl">SEARCH</label>
-      <input bind:value={$filters.search} placeholder="Name, team, nation…" style="width:200px" />
+      <label class="flbl" for="f-search">SEARCH</label>
+      <input id="f-search" bind:value={$filters.search} placeholder="Name, team, nation…" style="width:200px" />
     </div>
     <div class="fg">
-      <label class="flbl">TEAM</label>
-      <select bind:value={$filters.team}>
+      <label class="flbl" for="f-team">TEAM</label>
+      <select id="f-team" bind:value={$filters.team}>
         {#each $dropdownTeams as t}<option>{t}</option>{/each}
       </select>
     </div>
     <div class="fg">
-      <label class="flbl">COUNTRY</label>
-      <select bind:value={$filters.country}>
+      <label class="flbl" for="f-country">COUNTRY</label>
+      <select id="f-country" bind:value={$filters.country}>
         {#each $dropdownCountries as c}<option>{c}</option>{/each}
       </select>
     </div>
     <div class="fg">
-      <label class="flbl">CONTINENT</label>
-      <select bind:value={$filters.continent}>
+      <label class="flbl" for="f-cont">CONTINENT</label>
+      <select id="f-cont" bind:value={$filters.continent}>
         {#each $dropdownConts as c}<option>{c}</option>{/each}
       </select>
     </div>
     <div class="fg">
-      <label class="flbl">GRADE</label>
-      <select bind:value={$filters.grade}>
+      <label class="flbl" for="f-grade">GRADE</label>
+      <select id="f-grade" bind:value={$filters.grade}>
         <option>All Grades</option>
         {#each GRADES as g}<option>{g}</option>{/each}
       </select>
     </div>
     <div class="fg">
-      <label class="flbl">MIN CA</label>
-      <input type="number" bind:value={$filters.minCA} min="0" max="100" style="width:60px" />
+      <label class="flbl" for="f-minca">MIN CA</label>
+      <input id="f-minca" type="number" bind:value={$filters.minCA} min="0" max="100" style="width:60px" />
     </div>
     <div class="fg">
-      <label class="flbl">AGE</label>
-      <input type="number" bind:value={$filters.minAge} min="0" max="50" style="width:50px" />
+      <label class="flbl" for="f-minage">AGE</label>
+      <input id="f-minage" type="number" bind:value={$filters.minAge} min="0" max="50" style="width:50px" />
       <span style="color:#3a4e72;margin:0 4px">–</span>
       <input type="number" bind:value={$filters.maxAge} min="0" max="50" style="width:50px" />
     </div>
@@ -139,11 +138,11 @@
   <!-- Table -->
   <div class="table-area">
     {#if tab===0}
-      <RiderTable data={$filtered} cols={ROSTER_COLS} prefix="r" />
+      <RiderTable data={$filtered} cols={ROSTER_COLS} />
     {:else if tab===1}
-      <RiderTable data={youth} cols={YOUTH_COLS} prefix="y" />
+      <RiderTable data={youth} cols={YOUTH_COLS} />
     {:else}
-      <RiderTable data={agents} cols={FREE_COLS} prefix="f" />
+      <RiderTable data={agents} cols={FREE_COLS} />
     {/if}
   </div>
 </div>
@@ -151,20 +150,20 @@
 <style>
   .scout { display:flex; flex-direction:column; height:100%; overflow:hidden; }
   .filter-bar { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px;
-                padding:12px 16px; background:#0d1525; border-bottom:1px solid #111c30; flex-shrink:0; }
+                padding:12px 16px; background:#111c30; border-bottom:1px solid #253550; flex-shrink:0; }
   .fg { display:flex; flex-direction:column; gap:4px; }
-  .flbl { font-size:9px; font-weight:700; color:#3a4e72; letter-spacing:0.1em; text-transform:uppercase; }
+  .flbl { font-size:9px; font-weight:700; color:#4a5e80; letter-spacing:0.1em; text-transform:uppercase; }
   .checks { display:flex; flex-wrap:wrap; gap:10px; align-items:center; align-self:flex-end; padding-bottom:2px; }
-  .checks label { display:flex; gap:5px; align-items:center; font-size:12px; color:#6478a0; cursor:pointer; }
+  .checks label { display:flex; gap:5px; align-items:center; font-size:12px; color:#7888b0; cursor:pointer; }
   .type-bar { display:flex; align-items:center; gap:6px; padding:8px 16px;
-              background:#080d1a; border-bottom:1px solid #111c30; flex-shrink:0; flex-wrap:wrap; }
-  .count { margin-left:auto; font-size:11px; color:#3a4e72; }
-  .tabs { display:flex; gap:0; background:#0d1525; border-bottom:1px solid #1e2d4a; flex-shrink:0; }
-  .tab { padding:10px 18px; background:none; border:none; color:#6478a0; font-size:13px;
+              background:#0d1525; border-bottom:1px solid #1c2d48; flex-shrink:0; flex-wrap:wrap; }
+  .count { margin-left:auto; font-size:11px; color:#4a5e80; }
+  .tabs { display:flex; gap:0; background:#111c30; border-bottom:1px solid #253550; flex-shrink:0; }
+  .tab { padding:10px 18px; background:none; border:none; color:#7284a8; font-size:13px;
           cursor:pointer; border-bottom:2px solid transparent; font-family:inherit; }
   .tab:hover { color:#dce8ff; }
-  .tab.active { color:#4d88f5; border-bottom-color:#4d88f5; }
-  .badge-num { background:#1e2d4a; color:#4d88f5; border-radius:10px; padding:1px 6px;
+  .tab.active { color:#e8b800; border-bottom-color:#e8b800; }
+  .badge-num { background:#253550; color:#e8b800; border-radius:10px; padding:1px 6px;
                font-size:10px; font-weight:700; margin-left:5px; }
   .table-area { flex:1; overflow:hidden; }
 </style>

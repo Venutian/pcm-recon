@@ -373,11 +373,11 @@ fn country_name(iso: &str) -> &'static str {
 fn continent(iso: &str) -> &'static str {
     match iso {
         "ago"|"ben"|"bfa"|"cmr"|"cod"|"civ"|"dza"|"egy"|"eri"|"eth"|"gab"|"gha"|
-        "ken"|"lba"|"lso"|"mli"|"mar"|"moz"|"nam"|"nga"|"nig"|"rsa"|"rwa"|"sau"|
+        "ken"|"lba"|"lso"|"mli"|"mar"|"moz"|"nam"|"nga"|"nig"|"rsa"|"rwa"|
         "sen"|"tun"|"uga"|"zim" => "Africa",
-        "arm"|"aze"|"bhr"|"brn"|"geo"|"hkg"|"idn"|"ind"|"irn"|"irq"|"isr"|"jpn"|
-        "kaz"|"ken"|"khm"|"kgz"|"kor"|"kuw"|"lao"|"lka"|"mas"|"mng"|"oma"|"pak"|
-        "phl"|"qat"|"sgp"|"syr"|"tha"|"tls"|"twn"|"uae"|"uzb"|"vnm" => "Asia",
+        "arm"|"aze"|"bhr"|"brn"|"hkg"|"idn"|"ind"|"irn"|"irq"|"isr"|"jpn"|
+        "kaz"|"khm"|"kgz"|"kor"|"kuw"|"lao"|"lka"|"mas"|"mng"|"oma"|"pak"|
+        "phl"|"qat"|"sau"|"sgp"|"syr"|"tha"|"tls"|"twn"|"uae"|"uzb"|"vnm" => "Asia",
         "alb"|"and"|"aut"|"bel"|"bih"|"blr"|"bul"|"cro"|"cyp"|"cze"|"den"|"esp"|
         "est"|"fin"|"fra"|"gbr"|"geo"|"ger"|"gre"|"hun"|"irl"|"isl"|"ita"|"kos"|
         "lat"|"lie"|"ltu"|"lux"|"mco"|"mkd"|"mlt"|"mne"|"mol"|"ned"|"nor"|"pol"|
@@ -420,7 +420,7 @@ fn iso_to_alpha2(iso3: &str) -> &'static str {
         "svk"=>"SK","swe"=>"SE","swi"=>"CH","tha"=>"TH","tto"=>"TT","tun"=>"TN",
         "tur"=>"TR","twn"=>"TW","uae"=>"AE","uga"=>"UG","ukr"=>"UA","uru"=>"UY",
         "usa"=>"US","uzb"=>"UZ","ven"=>"VE","vnm"=>"VN","zim"=>"ZW","civ"=>"CI",
-        "eth"=>"ET","ben"=>"BJ","bfa"=>"BF","cod"=>"CD",_ => "",
+        "ben"=>"BJ","bfa"=>"BF","cod"=>"CD",_ => "",
     }
 }
 
@@ -565,7 +565,6 @@ pub fn extract(path: &str) -> Result<SaveData, String> {
         let iso  = country_map.get(&team_countries[i]).cloned().unwrap_or_default();
         teams_map.insert(tid, (team_names[i].clone(), team_shorts[i].clone(), iso));
     }
-
     // ── Read all cyclist columns ──────────────────────────────────────────────
     let ids        = read_ints(db,   OFF_ID,          NUM_CYCLISTS);
     let team_refs  = read_ints(db,   OFF_TEAM,        NUM_CYCLISTS);
@@ -605,7 +604,7 @@ pub fn extract(path: &str) -> Result<SaveData, String> {
         if id <= 0 || id > 200_000 { continue; }
 
         let team_id  = team_refs[i];
-        let (team_name, team_short, team_iso) = if let Some(t) = teams_map.get(&team_id) {
+        let (team_name, team_short, _team_iso) = if let Some(t) = teams_map.get(&team_id) {
             (t.0.clone(), t.1.clone(), t.2.clone())
         } else if is_free_agent(team_id) {
             ("Free Agent Pool".into(), "Free Agent".into(), String::new())
@@ -626,7 +625,7 @@ pub fn extract(path: &str) -> Result<SaveData, String> {
         } else { country_name(&iso).to_string() };
 
         let flag  = flag_emoji(&iso);
-        let nat_display = if flag.is_empty() { cname.clone() } else { format!("{} {}", flag, cname) };
+        let _nat_display = if flag.is_empty() { cname.clone() } else { format!("{} {}", flag, cname) };
 
         let age = age_at(birthdates[i], &game_date);
 
@@ -692,4 +691,47 @@ pub fn extract(path: &str) -> Result<SaveData, String> {
         teams,
         game_date: date_text(&game_date),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn debug_extract() {
+        let path = "C:/Users/YoelM/Documents/Paradox Interactive/New folder/Career_1.cdb";
+        let result = extract(path).unwrap();
+        println!("total cyclists: {}", result.cyclists.len());
+        println!("total teams: {}", result.teams.len());
+        println!("game_date: {}", result.game_date);
+        println!("top 5:");
+        for c in result.cyclists.iter().take(5) {
+            println!("  id={} name={:?} team={:?} nat={:?} ca={}", c.id, c.name, c.team, c.nationality, c.current_ability);
+        }
+        for target_id in &[7406i32, 9309, 3564] {
+            match result.cyclists.iter().find(|c| c.id == *target_id) {
+                Some(c) => println!("id={}: name={:?} team={:?} nat={:?} ca={}", c.id, c.name, c.team, c.nationality, c.current_ability),
+                None    => println!("id={}: FILTERED OUT", target_id),
+            }
+        }
+        // Also check raw reads for the position where id=7406 lives
+        let raw = std::fs::read(path).unwrap();
+        let mut db = Vec::new();
+        ZlibDecoder::new(&raw[0x0C..]).read_to_end(&mut db).unwrap();
+        let ids = read_ints(&db, OFF_ID, NUM_CYCLISTS);
+        if let Some(pos) = ids.iter().position(|&id| id == 7406) {
+            println!("id=7406 is at array index {}", pos);
+            let ln = read_u32(&db, OFF_LASTNAME_LEN + pos*4) as usize;
+            let fn_ = read_u32(&db, OFF_FIRSTNAME_LEN + pos*4) as usize;
+            println!("  lastname_len={} firstname_len={}", ln, fn_);
+            // find data position by summing previous lengths
+            let mut lpos = OFF_LASTNAME_DATA;
+            for i in 0..pos {
+                let l = read_u32(&db, OFF_LASTNAME_LEN + i*4) as usize;
+                if l > 0 && l <= 300 { lpos += l; }
+            }
+            if ln > 0 && ln <= 300 && lpos + ln <= db.len() {
+                println!("  lastname bytes: {:02X?}", &db[lpos..lpos+ln]);
+            }
+        }
+    }
 }

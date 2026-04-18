@@ -6,13 +6,13 @@
   $: natData = (() => {
     const m: Record<string,number>={};
     $filtered.forEach(c=>{if(c.nationality&&c.nationality!=="Unknown")m[c.nationality]=(m[c.nationality]??0)+1;});
-    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([l,v])=>({label:l,value:v,color:"#4d88f5"}));
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([l,v])=>({label:l,value:v,color:"#e8b800"}));
   })();
 
   $: typeData = (() => {
     const m: Record<string,number>={};
     $filtered.forEach(c=>{m[c.rider_type]=(m[c.rider_type]??0)+1;});
-    return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({label:l,value:v,color:TYPE_COLORS[l]??"#4d88f5"}));
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({label:l,value:v,color:TYPE_COLORS[l]??"#e8b800"}));
   })();
 
   $: gradeData = GRADES.map(g => {
