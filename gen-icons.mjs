@@ -1,126 +1,184 @@
-// Generates PCM Recon icons — dark background with a stylised "R" mark
-import { writeFileSync, mkdirSync } from 'fs';
-import zlib from 'zlib';
+// Generates PCM Recon icons with a cycling mark: wheel, mountain, and road.
+import { writeFileSync, mkdirSync } from "fs";
+import zlib from "zlib";
 
-mkdirSync('src-tauri/icons', { recursive: true });
+mkdirSync("src-tauri/icons", { recursive: true });
 
 function crc32(buf) {
-  let crc = 0xFFFFFFFF;
+  let crc = 0xffffffff;
   for (const b of buf) {
     crc ^= b;
-    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
   }
   return (~crc) >>> 0;
 }
 
 function chunk(type, data) {
-  const t = Buffer.from(type, 'ascii');
-  const len = Buffer.allocUnsafe(4); len.writeUInt32BE(data.length);
+  const t = Buffer.from(type, "ascii");
+  const len = Buffer.allocUnsafe(4);
+  len.writeUInt32BE(data.length);
   const crcBuf = Buffer.allocUnsafe(4);
   crcBuf.writeUInt32BE(crc32(Buffer.concat([t, data])));
   return Buffer.concat([len, t, data, crcBuf]);
 }
 
-function makePng(size) {
-  const sig = Buffer.from([137,80,78,71,13,10,26,10]);
-  const ihdr = Buffer.allocUnsafe(13);
-  ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4);
-  ihdr[8]=8; ihdr[9]=2; ihdr[10]=0; ihdr[11]=0; ihdr[12]=0;
+function clamp(value, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, value));
+}
 
-  // Draw icon: dark navy bg + accent circle + white "R" letter
+function mix(a, b, t) {
+  return Math.round(a + (b - a) * clamp(t));
+}
+
+function blend(base, next, t) {
+  return {
+    r: mix(base.r, next.r, t),
+    g: mix(base.g, next.g, t),
+    b: mix(base.b, next.b, t),
+  };
+}
+
+function distToSegment(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const denom = abx * abx + aby * aby || 1;
+  const t = clamp((apx * abx + apy * aby) / denom);
+  const qx = ax + abx * t;
+  const qy = ay + aby * t;
+  return Math.hypot(px - qx, py - qy);
+}
+
+function makePng(size) {
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.allocUnsafe(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
   const raw = Buffer.alloc(size * (1 + size * 3));
-  const cx = size / 2, cy = size / 2, r = size * 0.42;
-  const ir = size * 0.30; // inner radius for letter area
+  const cx = size / 2;
+  const cy = size / 2;
+  const badgeR = size * 0.42;
 
   for (let y = 0; y < size; y++) {
     const row = y * (1 + size * 3);
     raw[row] = 0;
     for (let x = 0; x < size; x++) {
-      const dx = x - cx, dy = y - cy;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      const nx = dx / r, ny = dy / r; // normalised
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.hypot(dx, dy);
 
-      let rr = 0x08, gg = 0x0d, bb = 0x1a; // bg dark navy
+      let color = { r: 0x08, g: 0x0d, b: 0x1a };
 
-      if (dist <= r) {
-        // Accent circle fill — gradient-ish solid
-        rr = 0x0f; gg = 0x18; bb = 0x29;
+      if (dist <= badgeR) {
+        const top = { r: 0x18, g: 0x24, b: 0x3a };
+        const bottom = { r: 0x0d, g: 0x15, b: 0x25 };
+        color = blend(top, bottom, y / size);
       }
 
-      // Circle border ring
-      if (dist > r * 0.88 && dist <= r) {
-        const t = (dist - r*0.88) / (r * 0.12);
-        rr = Math.round(0x4d * t + rr * (1-t));
-        gg = Math.round(0x88 * t + gg * (1-t));
-        bb = Math.round(0xf5 * t + bb * (1-t));
+      if (dist > badgeR * 0.88 && dist <= badgeR) {
+        const ringT = (dist - badgeR * 0.88) / (badgeR * 0.12);
+        color = blend(color, { r: 0x52, g: 0xb4, b: 0xf4 }, ringT);
       }
 
-      // Draw "R" glyph inside circle using simple pixel rules
-      if (dist < r * 0.82) {
-        const gx = (x / size - 0.5) * 2;  // -1..1
-        const gy = (y / size - 0.5) * 2;
+      if (dist <= badgeR * 0.84) {
+        const horizon = cy + size * 0.03;
+        const p1 = { x: size * 0.22, y: horizon + size * 0.05 };
+        const p2 = { x: size * 0.41, y: horizon - size * 0.2 };
+        const p3 = { x: size * 0.56, y: horizon - size * 0.07 };
+        const p4 = { x: size * 0.73, y: horizon + size * 0.03 };
+        const ridgeWidth = size * 0.03;
+        const ridge = Math.min(
+          distToSegment(x, y, p1.x, p1.y, p2.x, p2.y),
+          distToSegment(x, y, p2.x, p2.y, p3.x, p3.y),
+          distToSegment(x, y, p3.x, p3.y, p4.x, p4.y),
+        );
+        if (ridge <= ridgeWidth && y <= horizon + size * 0.08) {
+          const tint = 1 - ridge / ridgeWidth;
+          color = blend(color, { r: 0xe7, g: 0xf2, b: 0xff }, tint * 0.95);
+        }
 
-        // Letter "R" — left vertical stroke
-        const stemLeft = -0.28, stemRight = -0.10;
-        const topY = -0.55, botY = 0.55;
-        const bowlRight = 0.28, bowlMidY = -0.02;
+        const roadBottom = cy + size * 0.29;
+        const roadTop = cy - size * 0.06;
+        const roadLeftBottom = cx - size * 0.14;
+        const roadRightBottom = cx + size * 0.14;
+        const roadLeftTop = cx - size * 0.03;
+        const roadRightTop = cx + size * 0.03;
+        if (y >= roadTop && y <= roadBottom) {
+          const t = (y - roadTop) / (roadBottom - roadTop);
+          const left = roadLeftTop + (roadLeftBottom - roadLeftTop) * t;
+          const right = roadRightTop + (roadRightBottom - roadRightTop) * t;
+          if (x >= left && x <= right) {
+            color = blend(color, { r: 0x1f, g: 0x2e, b: 0x46 }, 0.92);
+            const center = (left + right) / 2;
+            const stripeWidth = Math.max(1.3, size * 0.012);
+            if (Math.abs(x - center) <= stripeWidth && y > roadTop + size * 0.04) {
+              const dash = Math.floor((y - roadTop) / Math.max(3, size * 0.07)) % 2 === 0;
+              if (dash) color = { r: 0xf0, g: 0xc0, b: 0x30 };
+            }
+          }
+        }
 
-        const inStem = gx >= stemLeft && gx <= stemRight && gy >= topY && gy <= botY;
+        const wheelR = size * 0.09;
+        const wheelCx = cx;
+        const wheelCy = cy + size * 0.1;
+        const wheelDist = Math.hypot(x - wheelCx, y - wheelCy);
+        const rim = Math.abs(wheelDist - wheelR);
+        const spoke = Math.min(Math.abs(x - wheelCx), Math.abs(y - wheelCy));
+        if (rim <= size * 0.016) {
+          color = { r: 0xe8, g: 0xb8, b: 0x00 };
+        } else if (wheelDist < wheelR - size * 0.018 && spoke <= size * 0.012) {
+          color = { r: 0x94, g: 0xc9, b: 0xff };
+        }
 
-        // Bowl: top half right side — half-circle-ish
-        const bowlCX = stemRight, bowlCY = (topY + bowlMidY) / 2;
-        const bowlR = (bowlMidY - topY) / 2;
-        const inBowlArc = Math.sqrt((gx-bowlCX)**2 + (gy-bowlCY)**2) < bowlR + 0.13
-                       && Math.sqrt((gx-bowlCX)**2 + (gy-bowlCY)**2) > bowlR - 0.03
-                       && gx > stemRight - 0.02 && gy < bowlMidY + 0.05;
-
-        // Bowl fill top connector
-        const inBowlFill = gy >= topY && gy <= topY + 0.12 && gx >= stemLeft && gx <= bowlRight + 0.05;
-        const inBowlMid  = gy >= bowlMidY - 0.07 && gy <= bowlMidY + 0.07 && gx >= stemLeft && gx <= stemRight + 0.18;
-
-        // Leg: diagonal from bowl-right going down-right
-        const legDX = gx - (stemRight + 0.04);
-        const legDY = gy - (bowlMidY + 0.04);
-        const legAngle = legDY - legDX * 1.1;
-        const inLeg = legAngle >= -0.06 && legAngle <= 0.06 && gy > bowlMidY && gy < botY && gx > stemLeft - 0.02;
-
-        if (inStem || inBowlArc || inBowlFill || inBowlMid || inLeg) {
-          rr = 0xff; gg = 0xff; bb = 0xff;
+        if (wheelDist <= size * 0.018) {
+          color = { r: 0xf4, g: 0xf8, b: 0xff };
         }
       }
 
-      raw[row + 1 + x*3]   = rr;
-      raw[row + 1 + x*3+1] = gg;
-      raw[row + 1 + x*3+2] = bb;
+      raw[row + 1 + x * 3] = color.r;
+      raw[row + 1 + x * 3 + 1] = color.g;
+      raw[row + 1 + x * 3 + 2] = color.b;
     }
   }
 
   const idat = zlib.deflateSync(raw, { level: 9 });
-  return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]);
+  return Buffer.concat([sig, chunk("IHDR", ihdr), chunk("IDAT", idat), chunk("IEND", Buffer.alloc(0))]);
 }
 
-function crc32Num(buf) { return crc32(buf); }
-
 function makeIco(sizes) {
-  const pngs = sizes.map(s => makePng(s));
+  const pngs = sizes.map((s) => makePng(s));
   const header = Buffer.allocUnsafe(6);
-  header.writeUInt16LE(0,0); header.writeUInt16LE(1,2); header.writeUInt16LE(pngs.length,4);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(pngs.length, 4);
   let offset = 6 + pngs.length * 16;
   const dirs = pngs.map((png, i) => {
     const d = Buffer.allocUnsafe(16);
     const s = sizes[i];
-    d[0]=s>=256?0:s; d[1]=s>=256?0:s; d[2]=0; d[3]=0;
-    d.writeUInt16LE(1,4); d.writeUInt16LE(32,6);
-    d.writeUInt32LE(png.length,8); d.writeUInt32LE(offset,12);
+    d[0] = s >= 256 ? 0 : s;
+    d[1] = s >= 256 ? 0 : s;
+    d[2] = 0;
+    d[3] = 0;
+    d.writeUInt16LE(1, 4);
+    d.writeUInt16LE(32, 6);
+    d.writeUInt32LE(png.length, 8);
+    d.writeUInt32LE(offset, 12);
     offset += png.length;
     return d;
   });
-  return Buffer.concat([header,...dirs,...pngs]);
+  return Buffer.concat([header, ...dirs, ...pngs]);
 }
 
-writeFileSync('src-tauri/icons/32x32.png',      makePng(32));
-writeFileSync('src-tauri/icons/128x128.png',     makePng(128));
-writeFileSync('src-tauri/icons/128x128@2x.png',  makePng(256));
-writeFileSync('src-tauri/icons/icon.ico',        makeIco([16,32,48,256]));
-writeFileSync('src-tauri/icons/icon.icns',       makePng(512));
-console.log('Icons written.');
+writeFileSync("src-tauri/icons/32x32.png", makePng(32));
+writeFileSync("src-tauri/icons/128x128.png", makePng(128));
+writeFileSync("src-tauri/icons/128x128@2x.png", makePng(256));
+writeFileSync("src-tauri/icons/icon.ico", makeIco([16, 32, 48, 256]));
+writeFileSync("src-tauri/icons/icon.icns", makePng(512));
+console.log("Icons written.");

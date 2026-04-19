@@ -1,8 +1,9 @@
 import { writable, derived } from "svelte/store";
 import type { Cyclist, Team, Filters } from "./types";
-import { inText } from "./format";
+import { inText, resolveTeamColor } from "./format";
 
 export const allCyclists   = writable<Cyclist[]>([]);
+export const scoutReports  = writable<Cyclist[]>([]);
 export const teams         = writable<Team[]>([]);
 export const teamRosters   = writable<Record<number, Cyclist[]>>({});
 export const gameDate      = writable("");
@@ -64,3 +65,13 @@ export const dropdownCountries = derived(allCyclists, $c =>
   ["All Countries",...new Set($c.map(r => r.nationality).filter(n => n && n !== "Unknown"))].sort());
 export const dropdownConts     = derived(allCyclists, $c =>
   ["All Continents",...new Set($c.map(r => r.continent).filter(Boolean))].sort());
+
+export const teamColors = derived(teams, $t => {
+  const m: Record<number, { fg: string; bg: string }> = {};
+  $t.forEach(t => {
+    const fg = resolveTeamColor(t.color1, t.id);
+    const bg = t.color2 && t.color2 !== "#000000" ? t.color2 : null;
+    m[t.id] = { fg, bg: bg ?? "" };
+  });
+  return m;
+});

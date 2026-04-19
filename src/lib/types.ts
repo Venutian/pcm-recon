@@ -24,10 +24,11 @@ export interface Cyclist {
 export interface Team {
   id: number; name: string; short: string;
   country_iso: string; country_name: string;
+  color1: string; color2: string;
 }
 
 export interface SaveData {
-  cyclists: Cyclist[]; teams: Team[]; game_date: string;
+  cyclists: Cyclist[]; scout_reports: Cyclist[]; teams: Team[]; game_date: string;
 }
 
 export interface Col {
@@ -35,6 +36,7 @@ export interface Col {
   label: string;
   width: number;
   align?: "left"|"center"|"right";
+  sortKey?: keyof Cyclist | string;
   fmt?: (v: unknown, row: Cyclist) => string;
 }
 
@@ -48,7 +50,7 @@ export interface Filters {
   sortKey: string; sortDir: 1|-1;
 }
 
-export const GRADES = ["Wonderkid","Elite Prospect","Late Bloomer","Ready Now","Monitor"] as const;
+export const GRADES = ["Wonderkid","Elite Prospect","Late Bloomer","Ready Now","Monitor","Veteran","Past Peak"] as const;
 export type Grade = typeof GRADES[number];
 
 export const GRADE_COLOR: Record<string, string> = {
@@ -57,6 +59,8 @@ export const GRADE_COLOR: Record<string, string> = {
   "Late Bloomer":   "#9470f0",
   "Ready Now":      "#24b0a8",
   "Monitor":        "#6478a0",
+  "Veteran":        "#a0b8d8",
+  "Past Peak":      "#7a6040",
 };
 export const GRADE_BG: Record<string, string> = {
   "Wonderkid":      "#1a1400",
@@ -64,6 +68,8 @@ export const GRADE_BG: Record<string, string> = {
   "Late Bloomer":   "#120a2a",
   "Ready Now":      "#041412",
   "Monitor":        "#0d1525",
+  "Veteran":        "#0e1828",
+  "Past Peak":      "#181008",
 };
 export const GRADE_DESC: Record<string, string> = {
   "Wonderkid":      "Exceptional youth — high CA and massive ceiling. Sign immediately.",
@@ -71,17 +77,19 @@ export const GRADE_DESC: Record<string, string> = {
   "Late Bloomer":   "Below-average now but ceiling far above. Patience required.",
   "Ready Now":      "Near-peak performer. Delivers maximum impact today.",
   "Monitor":        "Solid rider, limited ceiling. Re-evaluate next season.",
+  "Veteran":        "Prime years, high CA. Reliable performer with little headroom left.",
+  "Past Peak":      "Age 30+ with paper ceiling — development window has closed. Stats on screen are the peak.",
 };
 
 export const TYPE_COLORS: Record<string, string> = {
   "All":          "#263756",
-  "Climber":      "#2ecc82",
-  "Sprinter":     "#f0c030",
+  "Climber":      "#e84040",
+  "Sprinter":     "#2ecc82",
   "Time Trialist":"#4d88f5",
   "All-Rounder":  "#9470f0",
-  "Classics":     "#e87848",
-  "Ardennes":     "#c8e857",
-  "Rouleur":      "#e05050",
+  "Classics":     "#d8d8cc",
+  "Ardennes":     "#c87832",
+  "Rouleur":      "#60a0c8",
 };
 
 export const STAT_LABELS: Record<string, string> = {

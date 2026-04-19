@@ -61,52 +61,56 @@
 <div class="scout section-enter">
   <!-- Filter bar -->
   <div class="filter-bar">
-    <div class="fg">
-      <label class="flbl" for="f-search">SEARCH</label>
-      <input id="f-search" bind:value={$filters.search} placeholder="Name, team, nation…" style="width:200px" />
+    <div class="frow frow-main">
+      <div class="fg fg-search">
+        <label class="flbl" for="f-search">SEARCH</label>
+        <input id="f-search" bind:value={$filters.search} placeholder="Name, team, nation…" />
+      </div>
+      <div class="fg fg-grow">
+        <label class="flbl" for="f-team">TEAM</label>
+        <select id="f-team" bind:value={$filters.team}>
+          {#each $dropdownTeams as t}<option>{t}</option>{/each}
+        </select>
+      </div>
+      <div class="fg fg-grow">
+        <label class="flbl" for="f-country">COUNTRY</label>
+        <select id="f-country" bind:value={$filters.country}>
+          {#each $dropdownCountries as c}<option>{c}</option>{/each}
+        </select>
+      </div>
+      <div class="fg fg-grow">
+        <label class="flbl" for="f-cont">CONTINENT</label>
+        <select id="f-cont" bind:value={$filters.continent}>
+          {#each $dropdownConts as c}<option>{c}</option>{/each}
+        </select>
+      </div>
+      <div class="fg fg-grow">
+        <label class="flbl" for="f-grade">GRADE</label>
+        <select id="f-grade" bind:value={$filters.grade}>
+          <option>All Grades</option>
+          {#each GRADES as g}<option>{g}</option>{/each}
+        </select>
+      </div>
+      <div class="fg">
+        <label class="flbl" for="f-minca">MIN CA</label>
+        <input id="f-minca" type="number" bind:value={$filters.minCA} min="0" max="100" class="inp-sm" />
+      </div>
+      <div class="fg">
+        <label class="flbl" for="f-minage">AGE</label>
+        <div class="age-range">
+          <input id="f-minage" type="number" bind:value={$filters.minAge} min="0" max="50" class="inp-sm" />
+          <span class="age-sep">–</span>
+          <input type="number" bind:value={$filters.maxAge} min="0" max="50" class="inp-sm" />
+        </div>
+      </div>
     </div>
-    <div class="fg">
-      <label class="flbl" for="f-team">TEAM</label>
-      <select id="f-team" bind:value={$filters.team}>
-        {#each $dropdownTeams as t}<option>{t}</option>{/each}
-      </select>
+    <div class="frow frow-checks">
+      <label class="chk"><input type="checkbox" bind:checked={$filters.onlyU23}    /> U23</label>
+      <label class="chk"><input type="checkbox" bind:checked={$filters.onlyFree}   /> Free Only</label>
+      <label class="chk"><input type="checkbox" bind:checked={$filters.onlyUpside} /> High Upside</label>
+      <label class="chk"><input type="checkbox" bind:checked={$filters.onlyHighPot}/> High Pot</label>
+      <button class="btn btn-ghost btn-reset" on:click={() => filters.set(defaultFilters())}>Reset</button>
     </div>
-    <div class="fg">
-      <label class="flbl" for="f-country">COUNTRY</label>
-      <select id="f-country" bind:value={$filters.country}>
-        {#each $dropdownCountries as c}<option>{c}</option>{/each}
-      </select>
-    </div>
-    <div class="fg">
-      <label class="flbl" for="f-cont">CONTINENT</label>
-      <select id="f-cont" bind:value={$filters.continent}>
-        {#each $dropdownConts as c}<option>{c}</option>{/each}
-      </select>
-    </div>
-    <div class="fg">
-      <label class="flbl" for="f-grade">GRADE</label>
-      <select id="f-grade" bind:value={$filters.grade}>
-        <option>All Grades</option>
-        {#each GRADES as g}<option>{g}</option>{/each}
-      </select>
-    </div>
-    <div class="fg">
-      <label class="flbl" for="f-minca">MIN CA</label>
-      <input id="f-minca" type="number" bind:value={$filters.minCA} min="0" max="100" style="width:60px" />
-    </div>
-    <div class="fg">
-      <label class="flbl" for="f-minage">AGE</label>
-      <input id="f-minage" type="number" bind:value={$filters.minAge} min="0" max="50" style="width:50px" />
-      <span style="color:#3a4e72;margin:0 4px">–</span>
-      <input type="number" bind:value={$filters.maxAge} min="0" max="50" style="width:50px" />
-    </div>
-    <div class="checks">
-      <label><input type="checkbox" bind:checked={$filters.onlyU23}   /> U23</label>
-      <label><input type="checkbox" bind:checked={$filters.onlyFree}  /> Free Only</label>
-      <label><input type="checkbox" bind:checked={$filters.onlyUpside}/> High Upside</label>
-      <label><input type="checkbox" bind:checked={$filters.onlyHighPot}/> High Pot</label>
-    </div>
-    <button class="btn btn-ghost" on:click={() => filters.set(defaultFilters())}>Reset</button>
   </div>
 
   <!-- Type bar -->
@@ -149,12 +153,27 @@
 
 <style>
   .scout { display:flex; flex-direction:column; height:100%; overflow:hidden; }
-  .filter-bar { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px;
-                padding:12px 16px; background:#111c30; border-bottom:1px solid #253550; flex-shrink:0; }
-  .fg { display:flex; flex-direction:column; gap:4px; }
+
+  .filter-bar {
+    background:#111c30; border-bottom:1px solid #253550; flex-shrink:0;
+    padding:8px 16px; display:flex; flex-direction:column; gap:6px;
+  }
+  .frow { display:flex; align-items:flex-end; gap:8px; flex-wrap:nowrap; min-width:0; }
+  .frow-checks { gap:14px; padding-bottom:2px; }
+
+  .fg { display:flex; flex-direction:column; gap:3px; flex-shrink:0; min-width:0; }
+  .fg-search { flex: 0 0 180px; }
+  .fg-grow { flex: 1 1 100px; min-width:80px; }
+  .fg-grow select { width:100%; }
+
   .flbl { font-size:9px; font-weight:700; color:#4a5e80; letter-spacing:0.1em; text-transform:uppercase; }
-  .checks { display:flex; flex-wrap:wrap; gap:10px; align-items:center; align-self:flex-end; padding-bottom:2px; }
-  .checks label { display:flex; gap:5px; align-items:center; font-size:12px; color:#7888b0; cursor:pointer; }
+
+  .inp-sm { width:56px; }
+  .age-range { display:flex; align-items:center; gap:4px; }
+  .age-sep { color:#3a4e72; font-size:11px; }
+
+  .chk { display:flex; gap:5px; align-items:center; font-size:12px; color:#7888b0; cursor:pointer; white-space:nowrap; }
+  .btn-reset { margin-left:auto; }
   .type-bar { display:flex; align-items:center; gap:6px; padding:8px 16px;
               background:#0d1525; border-bottom:1px solid #1c2d48; flex-shrink:0; flex-wrap:wrap; }
   .count { margin-left:auto; font-size:11px; color:#4a5e80; }

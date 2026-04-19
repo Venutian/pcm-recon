@@ -14,6 +14,14 @@ html, body, #app {
   -webkit-font-smoothing: antialiased;
 }
 
+.flag-emoji {
+  display: inline-block;
+  font-family: "Noto Color Emoji", "Apple Color Emoji", "Twemoji Mozilla", emoji, sans-serif;
+  font-variant-emoji: emoji;
+  line-height: 1;
+  vertical-align: -0.08em;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -29,7 +37,7 @@ html, body, #app {
 .row-sl    td { color: #f0c030 !important; background: #1c1608; }
 
 /* Table base */
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table { width: 100%; min-width: max-content; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
 thead th {
   position: sticky; top: 0; z-index: 2;
   background: #111c30; color: #e8b800;
