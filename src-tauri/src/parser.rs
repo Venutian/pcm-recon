@@ -127,6 +127,13 @@ pub struct Cyclist {
     pub recuperation: i32,pub recuperation_p: i32,
     pub hill: i32,        pub hill_p: i32,
     pub baroudeur: i32,   pub baroudeur_p: i32,
+    pub scout_tour_potential: f32,
+    pub scout_mountain_potential: f32,
+    pub scout_timetrial_potential: f32,
+    pub scout_sprint_potential: f32,
+    pub scout_ardennes_potential: f32,
+    pub scout_cobble_potential: f32,
+    pub scout_flat_potential: f32,
     pub top_skills: Vec<TopSkill>,
 }
 
@@ -1043,6 +1050,13 @@ pub fn extract(path: &str) -> Result<SaveData, String> {
             recuperation: clamp(s_rec[i]), recuperation_p: clamp(s_rec_p[i]),
             hill: clamp(s_hil[i]), hill_p: clamp(s_hil_p[i]),
             baroudeur: clamp(s_bar[i]), baroudeur_p: clamp(s_bar_p[i]),
+            scout_tour_potential: 0.0,
+            scout_mountain_potential: 0.0,
+            scout_timetrial_potential: 0.0,
+            scout_sprint_potential: 0.0,
+            scout_ardennes_potential: 0.0,
+            scout_cobble_potential: 0.0,
+            scout_flat_potential: 0.0,
             top_skills: vec![],
         };
 
@@ -1064,13 +1078,31 @@ pub fn extract(path: &str) -> Result<SaveData, String> {
 
     let scout_row_col = pick_col(&find_cols(db, 0, db.len(), b"IDscout_cyclist"), 0, 0);
     let scout_row_count = count_sequential_ids(db, scout_row_col, NUM_CYCLISTS);
+    let scout_tour_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_tour"), 0, 0);
+    let scout_mountain_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_mountain"), 0, 0);
+    let scout_timetrial_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_timetrial"), 0, 0);
+    let scout_sprint_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_sprint"), 0, 0);
+    let scout_ardennes_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_ardenaises"), 0, 0);
+    let scout_cobble_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_flandriennes"), 0, 0);
+    let scout_flat_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_flat"), 0, 0);
     let mut scout_reports = Vec::new();
     let mut seen_scout_ids = std::collections::HashSet::new();
 
     for scout_row in 0..scout_row_count {
         if let Some(c) = cyclist_rows.get(scout_row).and_then(|row| row.as_ref()) {
+            if !c.free_agent || c.age <= 0 || c.age > 23 {
+                continue;
+            }
             if seen_scout_ids.insert(c.id) {
-                scout_reports.push(c.clone());
+                let mut scout = c.clone();
+                scout.scout_tour_potential = if scout_tour_col > 0 { read_f32(db, scout_tour_col + scout_row * 4) } else { 0.0 };
+                scout.scout_mountain_potential = if scout_mountain_col > 0 { read_f32(db, scout_mountain_col + scout_row * 4) } else { 0.0 };
+                scout.scout_timetrial_potential = if scout_timetrial_col > 0 { read_f32(db, scout_timetrial_col + scout_row * 4) } else { 0.0 };
+                scout.scout_sprint_potential = if scout_sprint_col > 0 { read_f32(db, scout_sprint_col + scout_row * 4) } else { 0.0 };
+                scout.scout_ardennes_potential = if scout_ardennes_col > 0 { read_f32(db, scout_ardennes_col + scout_row * 4) } else { 0.0 };
+                scout.scout_cobble_potential = if scout_cobble_col > 0 { read_f32(db, scout_cobble_col + scout_row * 4) } else { 0.0 };
+                scout.scout_flat_potential = if scout_flat_col > 0 { read_f32(db, scout_flat_col + scout_row * 4) } else { 0.0 };
+                scout_reports.push(scout);
             }
         }
     }

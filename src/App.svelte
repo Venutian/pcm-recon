@@ -26,6 +26,7 @@
   import Rankings from "./lib/sections/Rankings.svelte";
   import Analytics from "./lib/sections/Analytics.svelte";
   import Shortlist from "./lib/sections/Shortlist.svelte";
+  import { DONATE_URL } from "./lib/config";
   import type { SaveData } from "./lib/types";
 
   const NAV = [
@@ -91,6 +92,15 @@
     } catch {}
   }
 
+  async function openDonate() {
+    if (!DONATE_URL) return;
+    try {
+      await invoke("open_external", { url: DONATE_URL });
+    } catch (e) {
+      alert("Failed to open donation link:\n" + e);
+    }
+  }
+
   autoLoad();
 </script>
 
@@ -107,7 +117,7 @@
       <span class="logo-icon">&#x1F6B4;</span>
       <div class="logo-text">
         <span class="logo-name">PCM Recon</span>
-        <span class="logo-ver">v2.0</span>
+        <span class="logo-ver">v2.0.1</span>
       </div>
     </div>
     <div class="nav-items">
@@ -127,6 +137,9 @@
         <span class="save-val">{$currentPath ? $currentPath.split(/[\\/]/).pop() : "No file loaded"}</span>
         {#if $gameDate}<span class="save-date">{$gameDate}</span>{/if}
       </div>
+      {#if DONATE_URL}
+        <button class="donate-btn" on:click={openDonate}>Donate</button>
+      {/if}
     </div>
   </nav>
 
@@ -293,6 +306,26 @@
   .sidebar-footer {
     border-top: 1px solid #1c2d48;
     padding: 12px 14px;
+  }
+
+  .donate-btn {
+    margin-top: 12px;
+    width: 100%;
+    border: 1px solid #e8b80055;
+    background: linear-gradient(180deg, #2a2308, #1c1808);
+    color: #f2cf48;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.12s, transform 0.12s, border-color 0.12s;
+  }
+
+  .donate-btn:hover {
+    background: linear-gradient(180deg, #3a300a, #241d08);
+    border-color: #e8b80088;
   }
 
   .save-label {

@@ -18,6 +18,13 @@ export interface Cyclist {
   endurance: number; endurance_p: number; resistance: number; resistance_p: number;
   recuperation: number; recuperation_p: number;
   hill: number; hill_p: number; baroudeur: number; baroudeur_p: number;
+  scout_tour_potential: number;
+  scout_mountain_potential: number;
+  scout_timetrial_potential: number;
+  scout_sprint_potential: number;
+  scout_ardennes_potential: number;
+  scout_cobble_potential: number;
+  scout_flat_potential: number;
   top_skills: TopSkill[];
 }
 

@@ -1,38 +1,41 @@
 <script lang="ts">
-  import { scoutReports } from "../stores";
+  import { gameDate, scoutReports } from "../stores";
   import RiderTable from "../components/RiderTable.svelte";
   import type { Col } from "../types";
-  import { GRADES, TYPE_COLORS } from "../types";
-  import { fmtNat } from "../format";
+  import { TYPE_COLORS } from "../types";
+  import { fmtNat, fmtStars } from "../format";
+
+  function scoutStars(raw: number): string {
+    const score = Math.max(0, Math.min(6, Math.round(raw * 2) / 2));
+    return score > 0 ? fmtStars(score) : "-";
+  }
+
+  function scoutStatus(birthdate: string, saveDate: string): string {
+    const birthYear = Number(String(birthdate).slice(0, 4));
+    const saveYear = Number(saveDate.slice(0, 4));
+    if (!birthYear || !saveYear) return "";
+    return saveYear - birthYear <= 17 ? "Junior" : "Signable";
+  }
 
   const COLS: Col[] = [
     { key: "name", label: "Name", width: 190, align: "left" },
     { key: "nat_flag", sortKey: "nationality", label: "Country", width: 140, align: "left", fmt: (_, r) => fmtNat(r) },
     { key: "continent", label: "Continent", width: 95, align: "left" },
+    { key: "scout_status", label: "Status", width: 78, align: "left", fmt: (_, r) => scoutStatus(r.birthdate, $gameDate) },
     { key: "age", label: "Age", width: 44, align: "center" },
     { key: "rider_type", label: "Type", width: 110, align: "left" },
-    { key: "potential", label: "Stars", width: 56, align: "center" },
-    { key: "scout_grade", label: "Grade", width: 110, align: "left" },
-    { key: "flat_p", label: "Flat Pot", width: 64, align: "center" },
-    { key: "mountain_p", label: "Mtn Pot", width: 68, align: "center" },
-    { key: "med_mtn_p", label: "Med Pot", width: 68, align: "center" },
-    { key: "hill_p", label: "Hill Pot", width: 64, align: "center" },
-    { key: "timetrial_p", label: "TT Pot", width: 62, align: "center" },
-    { key: "prologue_p", label: "Pro Pot", width: 66, align: "center" },
-    { key: "sprint_p", label: "Spr Pot", width: 66, align: "center" },
-    { key: "acceleration_p", label: "Acc Pot", width: 68, align: "center" },
-    { key: "cobble_p", label: "Cob Pot", width: 66, align: "center" },
-    { key: "downhill_p", label: "DH Pot", width: 62, align: "center" },
-    { key: "endurance_p", label: "End Pot", width: 66, align: "center" },
-    { key: "resistance_p", label: "Res Pot", width: 66, align: "center" },
-    { key: "recuperation_p", label: "Rec Pot", width: 66, align: "center" },
-    { key: "baroudeur_p", label: "Bar Pot", width: 66, align: "center" },
+    { key: "scout_tour_potential", label: "Tour", width: 62, align: "center", fmt: (v) => scoutStars(Number(v)) },
+    { key: "scout_mountain_potential", label: "Mtn", width: 62, align: "center", fmt: (v) => scoutStars(Number(v)) },
+    { key: "scout_timetrial_potential", label: "TT", width: 62, align: "center", fmt: (v) => scoutStars(Number(v)) },
+    { key: "scout_sprint_potential", label: "Spr", width: 62, align: "center", fmt: (v) => scoutStars(Number(v)) },
+    { key: "scout_ardennes_potential", label: "Ard", width: 62, align: "center", fmt: (v) => scoutStars(Number(v)) },
+    { key: "scout_cobble_potential", label: "Cob", width: 62, align: "center", fmt: (v) => scoutStars(Number(v)) },
+    { key: "scout_flat_potential", label: "Flat", width: 62, align: "center", fmt: (v) => scoutStars(Number(v)) },
   ];
 
   const TYPE_OPTIONS = ["All", "Climber", "Sprinter", "Time Trialist", "All-Rounder", "Classics", "Ardennes", "Rouleur"];
 
   let search = "";
-  let grade = "All Grades";
   let country = "All Countries";
   let continent = "All Continents";
   let riderType = "All";
@@ -57,7 +60,6 @@
   $: sourceRows = $scoutReports.filter((c) => {
     if (!c.age || c.age < minAge || c.age > maxAge) return false;
     if (c.potential < minStars) return false;
-    if (grade !== "All Grades" && c.scout_grade !== grade) return false;
     if (country !== "All Countries" && c.nationality !== country) return false;
     if (continent !== "All Continents" && c.continent !== continent) return false;
     if (riderType !== "All" && c.rider_type !== riderType) return false;
@@ -90,13 +92,6 @@
       </select>
     </div>
     <div class="fg">
-      <label class="flbl" for="sr-grade">Grade</label>
-      <select id="sr-grade" bind:value={grade}>
-        <option>All Grades</option>
-        {#each GRADES as g}<option>{g}</option>{/each}
-      </select>
-    </div>
-    <div class="fg">
       <label class="flbl" for="sr-stars">Min Stars</label>
       <input id="sr-stars" type="number" bind:value={minStars} min="0" max="8" step="0.5" />
     </div>
@@ -124,10 +119,6 @@
         {option}
       </button>
     {/each}
-  </div>
-
-  <div class="intro">
-    <span>This view is driven only by the scout-report dataset and is trimmed to prospect-age riders by default. Team columns are intentionally removed so the focus stays on scout potential.</span>
   </div>
 
   <div class="table-wrap">
@@ -189,15 +180,6 @@
     border-bottom: 1px solid #1c2d48;
     flex-shrink: 0;
     flex-wrap: wrap;
-  }
-
-  .intro {
-    padding: 8px 16px;
-    font-size: 11px;
-    color: #7284a8;
-    background: #0d1525;
-    border-bottom: 1px solid #1c2d48;
-    flex-shrink: 0;
   }
 
   .flbl {

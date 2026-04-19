@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .vite/
+.claude/
+.DS_Store
+*.log
 
 # Tauri build
 src-tauri/target/

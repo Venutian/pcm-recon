@@ -22,6 +22,7 @@ mod dwm {
 
 use parser::SaveData;
 use std::path::PathBuf;
+use std::process::Command;
 use tauri_plugin_dialog::DialogExt;
 
 fn candidate_parents() -> Vec<PathBuf> {
@@ -149,6 +150,43 @@ fn export_csv(path: String, data: Vec<serde_json::Value>, fields: Vec<String>) -
     std::fs::write(&path, bytes).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Only http(s) URLs are allowed".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Unsupported platform".into())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -171,6 +209,7 @@ pub fn run() {
             save_notes,
             load_notes,
             export_csv,
+            open_external,
         ])
         .run(tauri::generate_context!())
         .expect("error running PCM Recon");
