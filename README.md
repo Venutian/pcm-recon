@@ -4,7 +4,7 @@ Desktop save parser and scouting tool for Pro Cycling Manager career files.
 
 [![Install](https://img.shields.io/badge/Install-Windows%20Build-e8b800?style=for-the-badge)](https://github.com/Venutian/pcm-recon/releases/tag/v2.0.2)
 
-[![Donate](https://img.shields.io/badge/Donate-Ko--fi-ff5f5f?style=for-the-badge)](https://ko-fi.com/venutian)
+[![Buy Me Coffee](https://img.shields.io/badge/Donate-Ko--fi-ff5f5f?style=for-the-badge)](https://ko-fi.com/venutian)
 
 ## Download
 
