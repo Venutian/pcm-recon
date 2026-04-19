@@ -140,11 +140,6 @@
     color: #dce8ff;
   }
 
-  .t-flag {
-    font-size: 16px;
-    flex-shrink: 0;
-  }
-
   .t-name {
     flex: 1;
     font-size: 12px;
@@ -180,10 +175,6 @@
     align-items: center;
     gap: 10px;
     flex-shrink: 0;
-  }
-
-  .t-flag2 {
-    font-size: 28px;
   }
 
   .t-hname {
