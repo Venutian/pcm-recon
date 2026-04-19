@@ -1,1 +1,1 @@
-export const DONATE_URL = "";
+export const DONATE_URL = "https://ko-fi.com/venutian";
