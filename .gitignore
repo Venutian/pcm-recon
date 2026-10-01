@@ -21,3 +21,11 @@ pcm_recon_notes.json
 .idea/
 .vscode/settings.json
 *.suo
+PCMDBEdit/AutoUpdater.NET.dll
+PCMDBEdit/AutoUpdater.NET.pdb
+PCMDBEdit/AutoUpdater.NET.xml
+PCMDBEdit/Exporter.exe
+PCMDBEdit/PCM DBEdit By Davy.exe
+PCMDBEdit/PCM DBEdit By Davy.exe.config
+PCMDBEdit/PCM DBEdit By Davy.pdb
+.playwright-mcp/

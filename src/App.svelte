@@ -1,416 +1,201 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
-  import { open } from "@tauri-apps/plugin-dialog";
-  import { tick } from "svelte";
-  import {
-    activeSection,
-    allCyclists,
-    scoutReports,
-    teams,
-    teamRosters,
-    gameDate,
-    currentPath,
-    isLoading,
-    loadStatus,
-    notes,
-    shortlistIds,
-    filters,
-  } from "./lib/stores";
-  import DetailPanel from "./lib/components/DetailPanel.svelte";
-  import Dashboard from "./lib/sections/Dashboard.svelte";
-  import Scouting from "./lib/sections/Scouting.svelte";
-  import ScoutReports from "./lib/sections/ScoutReports.svelte";
-  import Teams from "./lib/sections/Teams.svelte";
-  import AllRiders from "./lib/sections/AllRiders.svelte";
-  import FreeMarket from "./lib/sections/FreeMarket.svelte";
-  import Rankings from "./lib/sections/Rankings.svelte";
-  import Analytics from "./lib/sections/Analytics.svelte";
-  import Shortlist from "./lib/sections/Shortlist.svelte";
+  import { onMount } from "svelte";
+  import { activeSection, save, meta, finance, myTeam, isLoading, loadStatus, selectedRider, paletteOpen, shortlist, compareIds, lastSavePath, goTo } from "./lib/stores";
+  import { loadWorkspace, loadSave, reloadSave, pickSave, saveModified, openExternal, isDesktop } from "./lib/api";
+  import { NAV } from "./lib/nav";
+  import { eurShort, fmtDate, teamColor } from "./lib/format";
   import { DONATE_URL } from "./lib/config";
-  import type { SaveData } from "./lib/types";
+  import Icon from "./lib/components/Icon.svelte";
+  import DetailPanel from "./lib/components/DetailPanel.svelte";
+  import Toasts from "./lib/components/Toasts.svelte";
+  import CommandPalette from "./lib/components/CommandPalette.svelte";
+  import Welcome from "./lib/components/Welcome.svelte";
+  import WriteConfirm from "./lib/components/WriteConfirm.svelte";
+  import Overview from "./lib/sections/Overview.svelte";
+  import Prospects from "./lib/sections/Prospects.svelte";
+  import Scout from "./lib/sections/Scout.svelte";
+  import Market from "./lib/sections/Market.svelte";
+  import Shortlist from "./lib/sections/Shortlist.svelte";
+  import Compare from "./lib/sections/Compare.svelte";
+  import MyTeam from "./lib/sections/MyTeam.svelte";
+  import Finances from "./lib/sections/Finances.svelte";
+  import Teams from "./lib/sections/Teams.svelte";
+  import Rankings from "./lib/sections/Rankings.svelte";
+  import Database from "./lib/sections/Database.svelte";
 
-  const NAV = [
-    { icon: "\u25C8", name: "Dashboard" },
-    { icon: "\u{1F50D}", name: "Scouting" },
-    { icon: "\u{1F9ED}", name: "Scout Reports" },
-    { icon: "\u{1F465}", name: "Teams" },
-    { icon: "\u{1F6B4}", name: "All Riders" },
-    { icon: "\u{1F4B0}", name: "Free Market" },
-    { icon: "\u{1F3C6}", name: "Rankings" },
-    { icon: "\u{1F4CA}", name: "Analytics" },
-    { icon: "\u2605", name: "Shortlist" },
-  ];
+  const SECTIONS: Record<string, any> = {
+    Overview, Prospects, Scout, Market, Shortlist, Compare,
+    "My team": MyTeam, Finances, Teams, Rankings, Database,
+  };
+  const GROUPS = ["Scouting", "Your team", "League", "Tools"] as const;
 
-  async function openFile() {
-    const path = (await open({
-      filters: [{ name: "PCM Career Save", extensions: ["cdb"] }],
-    }).catch(() => null)) as string | null;
-    if (!path) return;
-    await loadSave(path);
+  let changedOnDisk = false;
+
+  onMount(async () => {
+    const ws = await loadWorkspace();
+    const last = ws.lastSave || $lastSavePath;
+    if (last) await loadSave(last, true);
+    else if (!isDesktop && import.meta.env.VITE_MOCK_SAVE) await loadSave("preview.cdb", true);
+  });
+
+  async function checkDisk() {
+    if (!$save || !isDesktop) return;
+    const m = await saveModified($save.meta.path).catch(() => 0);
+    changedOnDisk = m > 0 && Math.abs(m - $save.modified_ms) > 1500;
+  }
+  $: if ($save) changedOnDisk = false;
+
+  function onKey(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); paletteOpen.update((v) => !v); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); pickSave(); }
+    if (e.key === "F5" && $save) { e.preventDefault(); reloadSave(); }
   }
 
-  async function loadSave(path: string) {
-    isLoading.set(true);
-    loadStatus.set(`Loading ${path.split(/[\\/]/).pop()}…`);
-    await tick(); // ensure spinner renders before heavy IPC call
-    try {
-      const data: SaveData = await invoke("load_save", { path });
-      loadStatus.set(`Processing ${data.cyclists.length.toLocaleString()} riders…`);
-      await tick();
-      allCyclists.set(data.cyclists);
-      scoutReports.set(data.scout_reports ?? []);
-      teams.set(data.teams);
-      await tick();
-      gameDate.set(data.game_date);
-      currentPath.set(path);
-
-      const rosters: Record<number, typeof data.cyclists> = {};
-      data.cyclists.forEach((c) => {
-        (rosters[c.team_id] ??= []).push(c);
-      });
-      teamRosters.set(rosters);
-
-      const dir = path.replace(/[^/\\]+$/, "");
-      const npath = dir + "pcm_recon_notes.json";
-      const savedNotes: Record<string, string> = await invoke("load_notes", { path: npath });
-      notes.set(savedNotes);
-
-      loadStatus.set(`${data.cyclists.length.toLocaleString()} riders | ${(data.scout_reports ?? []).length.toLocaleString()} scout reports | ${data.teams.length} teams | ${data.game_date}`);
-      activeSection.set("Dashboard");
-    } catch (e) {
-      loadStatus.set(`Error: ${e}`);
-      alert("Failed to load save:\n" + e);
-    } finally {
-      isLoading.set(false);
-    }
-  }
-
-  async function autoLoad() {
-    try {
-      const path = await invoke<string | null>("find_default_save", { filename: "Career_1.cdb" });
-      if (path) await loadSave(path);
-    } catch {}
-  }
-
-  async function openDonate() {
-    if (!DONATE_URL) return;
-    try {
-      await invoke("open_external", { url: DONATE_URL });
-    } catch (e) {
-      alert("Failed to open donation link:\n" + e);
-    }
-  }
-
-  autoLoad();
+  $: badge = (name: string) => name === "Shortlist" ? $shortlist.size : name === "Compare" ? $compareIds.length : 0;
+  $: balance = $finance?.balance ?? 0;
 </script>
 
+<svelte:window on:keydown={onKey} on:focus={checkDisk} />
+
 {#if $isLoading}
-  <div class="loading-overlay">
-    <div class="loading-spinner"></div>
-    <div class="loading-label">{$loadStatus || "Loading…"}</div>
+  <div class="loading" role="status">
+    <div class="wheel"><Icon name="wheel" size={44} stroke={1.5} /></div>
+    <div>{$loadStatus || "Loading…"}</div>
   </div>
 {/if}
 
-<div class="app">
-  <nav class="sidebar">
-    <div class="logo">
-      <span class="logo-icon">&#x1F6B4;</span>
-      <div class="logo-text">
-        <span class="logo-name">PCM Recon</span>
-        <span class="logo-ver">v2.0.1</span>
-      </div>
+<div class="app" class:with-detail={!!$selectedRider && !!$save}>
+  <nav class="side">
+    <div class="brand">
+      <img class="mark" src="/logo.svg" alt="" />
+      <div><strong>PCM Recon</strong><small>v3.0</small></div>
     </div>
-    <div class="nav-items">
-      {#each NAV as item}
-        <button class="nav-btn" class:active={$activeSection === item.name} on:click={() => activeSection.set(item.name)}>
-          <span class="nav-icon">{item.icon}</span>
-          <span class="nav-label">{item.name}</span>
-          {#if item.name === "Shortlist" && $shortlistIds.size > 0}
-            <span class="nav-badge">{$shortlistIds.size}</span>
-          {/if}
-        </button>
+    {#if $save}
+      {#each GROUPS as g}
+        <div class="group">
+          <span class="glabel">{g}</span>
+          {#each NAV.filter((n) => n.group === g) as item}
+            <button class="nav" class:active={$activeSection === item.name} on:click={() => goTo(item.name)}>
+              <Icon name={item.icon} size={17} />
+              <span>{item.name}</span>
+              {#if badge(item.name)}<span class="badge">{badge(item.name)}</span>{/if}
+            </button>
+          {/each}
+        </div>
       {/each}
-    </div>
-    <div class="sidebar-footer">
-      <div class="save-info">
-        <span class="save-label">SAVE FILE</span>
-        <span class="save-val">{$currentPath ? $currentPath.split(/[\\/]/).pop() : "No file loaded"}</span>
-        {#if $gameDate}<span class="save-date">{$gameDate}</span>{/if}
-      </div>
+    {/if}
+    <div class="side-foot">
+      {#if $save}
+        <div class="file" title={$save.meta.path}>
+          <span>{$save.meta.file_name}</span>
+          <small>{$save.meta.mod_name || "PCM database"}</small>
+        </div>
+      {/if}
       {#if DONATE_URL}
-        <button class="donate-btn" on:click={openDonate}>Donate</button>
+        <button class="btn btn-quiet btn-sm" on:click={() => openExternal(DONATE_URL)}>Support on Ko-fi</button>
       {/if}
     </div>
   </nav>
 
-  <div class="content">
-    <header class="header">
-      <div class="status-text">
-        {#if $isLoading}
-          <span class="loading-dot"></span>
+  <main>
+    {#if $save}
+      <header class="strip">
+        <div class="career">
+          <span class="jersey" style="background:{teamColor($myTeam?.color1, $myTeam?.id ?? 0)}; --c2:{$myTeam?.color2 || 'transparent'}"></span>
+          <div>
+            <strong>{$meta?.user_team || "No team"}</strong>
+            <small>{$myTeam?.division ? `${$myTeam.division} · ` : ""}{fmtDate($meta?.game_date ?? "")}</small>
+          </div>
+        </div>
+        {#if $finance}
+          <button class="bal" class:neg={balance < 0} on:click={() => goTo("Finances")} title="Open finances to adjust your balance">
+            <small>Balance</small>
+            <span>{eurShort(balance)}</span>
+          </button>
+          <div class="budget"><small>Season budget</small><span>{eurShort($finance.season_budget)}</span></div>
         {/if}
-        {$loadStatus || "Open a PCM career save to begin"}
+        <div class="spacer"></div>
+        {#if changedOnDisk}
+          <button class="btn btn-sm changed" on:click={reloadSave}><Icon name="alert" size={14} />Save changed in PCM, reload</button>
+        {/if}
+        <button class="btn btn-quiet btn-sm" on:click={() => paletteOpen.set(true)} title="Search (Ctrl+K)"><Icon name="scout" size={15} />Search<kbd>Ctrl K</kbd></button>
+        <button class="btn btn-quiet btn-sm" on:click={reloadSave} title="Reload from disk (F5)"><Icon name="reload" size={15} />Reload</button>
+        <button class="btn btn-sm" on:click={pickSave} title="Open another save (Ctrl+O)"><Icon name="open" size={15} />Open save</button>
+      </header>
+      <div class="section">
+        {#key $activeSection}
+          <svelte:component this={SECTIONS[$activeSection] ?? Overview} />
+        {/key}
       </div>
-      <div class="header-actions">
-        <button
-          class="btn btn-ghost"
-          on:click={() => filters.update((f) => ({ ...f, search: "", team: "All Teams", country: "All Countries" }))}
-        >
-          Reset Filters
-        </button>
-        <button class="btn btn-accent" on:click={openFile} disabled={$isLoading}>
-          {$isLoading ? "Loading..." : "Open Save"}
-        </button>
-      </div>
-    </header>
+    {:else}
+      <Welcome />
+    {/if}
+  </main>
 
-    <div class="section-area">
-      {#if $activeSection === "Dashboard"}<Dashboard />
-      {:else if $activeSection === "Scouting"}<Scouting />
-      {:else if $activeSection === "Scout Reports"}<ScoutReports />
-      {:else if $activeSection === "Teams"}<Teams />
-      {:else if $activeSection === "All Riders"}<AllRiders />
-      {:else if $activeSection === "Free Market"}<FreeMarket />
-      {:else if $activeSection === "Rankings"}<Rankings />
-      {:else if $activeSection === "Analytics"}<Analytics />
-      {:else if $activeSection === "Shortlist"}<Shortlist />
-      {/if}
-    </div>
-  </div>
-
-  <aside class="detail-aside">
-    <DetailPanel />
-  </aside>
+  {#if $save && $selectedRider}
+    <aside class="detail"><DetailPanel /></aside>
+  {/if}
 </div>
 
+<CommandPalette />
+<WriteConfirm />
+<Toasts />
+
 <style>
-  .loading-overlay {
-    position: fixed; inset: 0; z-index: 9999;
-    background: #0b1422;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 20px;
+  .app { display: grid; grid-template-columns: 210px minmax(0, 1fr); height: 100vh; overflow: hidden; }
+  .app.with-detail { grid-template-columns: 210px minmax(0, 1fr) 380px; }
+
+  .side { background: var(--bg-2); border-right: 1px solid var(--rule); display: flex; flex-direction: column; overflow-y: auto; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 14px; }
+  .mark { width: 38px; height: 38px; margin: -2px; }
+  .brand strong { display: block; font-family: var(--font-cond); font-size: 19px; font-weight: 700; line-height: 1; }
+  .brand small { color: var(--ink-4); font-size: 11px; }
+  .group { padding: 8px 8px 4px; }
+  .glabel { display: block; font-size: 11px; color: var(--ink-4); padding: 6px 10px 4px; }
+  .nav {
+    width: 100%; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 6px;
+    background: none; border: none; color: var(--ink-2); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left;
   }
-  .loading-spinner {
-    width: 52px; height: 52px;
-    border: 3px solid #1c2d48;
-    border-top-color: #e8b800;
-    border-radius: 50%;
-    animation: spin 0.75s linear infinite;
+  .nav:hover { background: var(--panel); color: var(--ink); }
+  .nav.active { background: var(--panel-2); color: var(--ink); box-shadow: inset 3px 0 0 var(--jaune); }
+  .nav.active :global(svg) { color: var(--jaune); }
+  .badge { margin-left: auto; font-size: 11px; font-weight: 700; background: var(--rule); color: var(--ink); border-radius: 999px; padding: 0 7px; }
+  .side-foot { margin-top: auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .file { display: flex; flex-direction: column; font-size: 12px; color: var(--ink-2); overflow: hidden; }
+  .file span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file small { color: var(--ink-4); }
+
+  main { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  .strip {
+    display: flex; align-items: center; gap: 22px; padding: 10px 18px; min-height: 60px;
+    border-bottom: 1px solid var(--rule); background: var(--bg-2); flex-shrink: 0;
   }
-  .loading-label {
-    font-size: 13px; color: #7888b0; letter-spacing: 0.04em;
-    max-width: 400px; text-align: center;
+  .career { display: flex; align-items: center; gap: 11px; }
+  .jersey { width: 26px; height: 30px; border-radius: 5px 5px 3px 3px; position: relative; box-shadow: inset 0 -6px 0 var(--c2); }
+  .career strong { display: block; font-family: var(--font-cond); font-size: 19px; font-weight: 600; line-height: 1.05; }
+  .career small, .bal small, .budget small { display: block; font-size: 11px; color: var(--ink-3); }
+  .bal { background: none; border: none; color: var(--vert); text-align: left; cursor: pointer; padding: 2px 8px; border-radius: 6px; font: inherit; }
+  .bal:hover { background: var(--panel); }
+  .bal.neg { color: var(--pois); }
+  .bal span, .budget span { font-family: var(--font-cond); font-size: 22px; font-weight: 700; line-height: 1; }
+  .spacer { flex: 1; }
+  kbd { font-size: 10px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; color: var(--ink-3); margin-left: 2px; }
+  .changed { border-color: var(--jaune); color: var(--jaune); }
+  .section { flex: 1; overflow: hidden; }
+
+  .detail { border-left: 1px solid var(--rule); overflow: hidden; animation: slide 0.16s ease-out; }
+  @keyframes slide { from { transform: translateX(16px); opacity: 0; } }
+
+  .loading {
+    position: fixed; inset: 0; z-index: 9999; background: rgba(11, 15, 20, 0.92);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--ink-2);
   }
+  .wheel { color: var(--jaune); animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .app {
-    display: grid;
-    grid-template-columns: 196px 1fr 340px;
-    grid-template-rows: 100vh;
-    height: 100vh;
-    overflow: hidden;
-    background: #0d1525;
-  }
-
-  .sidebar {
-    background: #0b1422;
-    border-right: 1px solid #1c2d48;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 16px 14px;
-    border-bottom: 1px solid #1c2d48;
-  }
-
-  .logo-icon {
-    font-size: 22px;
-  }
-
-  .logo-text {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .logo-name {
-    font-size: 14px;
-    font-weight: 700;
-    color: #dce8ff;
-    letter-spacing: 0.01em;
-  }
-
-  .logo-ver {
-    font-size: 10px;
-    color: #4a5e80;
-  }
-
-  .nav-items {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px 0;
-  }
-
-  .nav-btn {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 10px 14px;
-    background: none;
-    border: none;
-    color: #7284a8;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.12s, color 0.12s;
-    font-family: inherit;
-    font-size: 13px;
-  }
-
-  .nav-btn:hover {
-    background: #172035;
-    color: #dce8ff;
-  }
-
-  .nav-btn.active {
-    background: linear-gradient(90deg, #1e2a10, #161e0a);
-    color: #e8b800;
-    border-left: 2px solid #e8b800;
-  }
-
-  .nav-icon {
-    font-size: 15px;
-    width: 20px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  .nav-label {
-    flex: 1;
-    font-weight: 500;
-  }
-
-  .nav-badge {
-    background: #e85598;
-    color: #fff;
-    border-radius: 10px;
-    padding: 1px 6px;
-    font-size: 10px;
-    font-weight: 700;
-  }
-
-  .sidebar-footer {
-    border-top: 1px solid #1c2d48;
-    padding: 12px 14px;
-  }
-
-  .donate-btn {
-    margin-top: 12px;
-    width: 100%;
-    border: 1px solid #e8b80055;
-    background: linear-gradient(180deg, #2a2308, #1c1808);
-    color: #f2cf48;
-    border-radius: 8px;
-    padding: 9px 10px;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.12s, transform 0.12s, border-color 0.12s;
-  }
-
-  .donate-btn:hover {
-    background: linear-gradient(180deg, #3a300a, #241d08);
-    border-color: #e8b80088;
-  }
-
-  .save-label {
-    display: block;
-    font-size: 9px;
-    font-weight: 700;
-    color: #4a5e80;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    margin-bottom: 4px;
-  }
-
-  .save-val {
-    display: block;
-    font-size: 11px;
-    color: #7284a8;
-    word-break: break-all;
-  }
-
-  .save-date {
-    display: block;
-    font-size: 10px;
-    color: #4a5e80;
-    margin-top: 2px;
-  }
-
-  .content {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
-    height: 52px;
-    background: #111c30;
-    border-bottom: 1px solid #253550;
-    flex-shrink: 0;
-    gap: 12px;
-  }
-
-  .status-text {
-    font-size: 12px;
-    color: #7888b0;
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .loading-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #e8b800;
-    animation: pulse 1s infinite;
-    flex-shrink: 0;
-  }
-
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-
-    50% {
-      opacity: 0.3;
-    }
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .section-area {
-    flex: 1;
-    overflow: hidden;
-  }
-
-  .detail-aside {
-    border-left: 1px solid #1c2d48;
-    overflow: hidden;
+  @media (max-width: 1250px) {
+    .app.with-detail { grid-template-columns: 64px minmax(0, 1fr) 360px; }
+    .app.with-detail .nav span, .app.with-detail .glabel, .app.with-detail .brand div, .app.with-detail .side-foot { display: none; }
+    .app.with-detail .badge { display: none; }
   }
 </style>

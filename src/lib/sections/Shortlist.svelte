@@ -1,73 +1,65 @@
 <script lang="ts">
-  import { allCyclists, shortlistIds } from "../stores";
-  import RiderTable from "../components/RiderTable.svelte";
+  import { allCyclists, shortlist, notes, compareIds, goTo } from "../stores";
+  import { exportCsv } from "../api";
   import type { Col } from "../types";
-  import { fmtNat } from "../format";
-  import { invoke } from "@tauri-apps/api/core";
-  import { save } from "@tauri-apps/plugin-dialog";
+  import RiderTable from "../components/RiderTable.svelte";
+  import Modal from "../components/Modal.svelte";
+  import Icon from "../components/Icon.svelte";
 
-  const COLS: Col[] = [
-    { key:"name",            label:"Name",    width:200, align:"left" },
-    { key:"nat_flag",        label:"Country", width:130, align:"left", fmt:(_,r)=>fmtNat(r) },
-    { key:"team_short",      label:"Team",    width:150, align:"left" },
-    { key:"age",             label:"Age",     width:44,  align:"center" },
-    { key:"current_ability", label:"CA",      width:50,  align:"center" },
-    { key:"potential",       label:"Stars",   width:52,  align:"center" },
-    { key:"growth",          label:"Upside",  width:58,  align:"center" },
-    { key:"scout_grade",     label:"Grade",   width:110, align:"left" },
-    { key:"rider_type",      label:"Type",    width:110, align:"left" },
-    { key:"flat",            label:"Flat",    width:46,  align:"center" },
-    { key:"mountain",        label:"Mtn",     width:46,  align:"center" },
-    { key:"timetrial",       label:"TT",      width:46,  align:"center" },
-    { key:"sprint",          label:"Spr",     width:46,  align:"center" },
+  $: rows = $allCyclists.filter((c) => $shortlist.has(c.id));
+  let confirmClear = false;
+
+  const cols: Col[] = [
+    { key: "name", label: "Rider", width: 210, kind: "rider" },
+    { key: "team", label: "Team", width: 170, kind: "team" },
+    { key: "age", label: "Age", width: 50, align: "center" },
+    { key: "current_ability", label: "CA", width: 62, kind: "ca", align: "center" },
+    { key: "potential", label: "Potential", width: 100, kind: "stars" },
+    { key: "rider_type", label: "Type", width: 122, kind: "type" },
+    { key: "wage", label: "Wage / mo", width: 86, kind: "money", align: "right" },
+    { key: "contract_end", label: "Contract", width: 74, kind: "contract", align: "center" },
+    { key: "note", label: "Your note", width: 320, value: (c) => $notes[String(c.id)] ?? "" },
   ];
 
-  $: data = [...$allCyclists.filter(c=>$shortlistIds.has(c.id))]
-    .sort((a,b)=>b.current_ability-a.current_ability);
-
-  function clearAll() {
-    if (confirm("Remove all riders from your shortlist?")) shortlistIds.set(new Set());
+  function compareAll() {
+    compareIds.set(rows.slice().sort((a, b) => b.current_ability - a.current_ability).slice(0, 4).map((c) => c.id));
+    goTo("Compare");
   }
-
-  async function exportCSV() {
-    if (!data.length) return;
-    const fields = ["name","nationality","iso","team","age","rider_type","current_ability",
-                    "potential","growth","scout_grade","flat","mountain","timetrial","sprint","cobble"];
-    const path = await save({ filters:[{name:"CSV",extensions:["csv"]}], defaultPath:"pcm_shortlist.csv" }).catch(()=>null);
-    if (!path) return;
-    await invoke("export_csv", { path, data, fields }).catch(e=>alert("Export failed: "+e));
+  function exportRows() {
+    exportCsv(rows.map((c) => ({ ...c, note: $notes[String(c.id)] ?? "" })),
+      ["name", "team", "nationality", "age", "rider_type", "current_ability", "potential", "wage", "contract_end", "note"], "pcm_shortlist.csv");
   }
 </script>
 
-<div class="sl section-enter">
-  <div class="toolbar">
-    <span class="hdr-text">SHORTLISTED RIDERS</span>
-    <span class="count">{$shortlistIds.size} riders</span>
-    <button class="btn btn-ghost" on:click={exportCSV}>Export CSV</button>
-    {#if $shortlistIds.size > 0}
-      <button class="btn btn-danger" on:click={clearAll}>Clear All</button>
-    {/if}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1>Shortlist</h1>
+      <p>Riders you've starred. The list and your notes are kept between sessions, separately from the save file.</p>
+    </div>
+    <div class="actions">
+      {#if rows.length > 1}<button class="btn btn-sm" on:click={compareAll}><Icon name="compare" size={14} />Compare top {Math.min(4, rows.length)}</button>{/if}
+      <button class="btn btn-sm btn-quiet" on:click={exportRows} disabled={!rows.length}><Icon name="export" size={14} />CSV</button>
+      {#if rows.length}<button class="btn btn-sm btn-danger" on:click={() => (confirmClear = true)}><Icon name="trash" size={14} />Clear</button>{/if}
+    </div>
   </div>
-  {#if data.length === 0}
-    <div class="empty">
-      <span style="font-size:32px;opacity:0.3">★</span>
-      <p>Star riders from any table to add them here</p>
-    </div>
-  {:else}
-    <div class="table-wrap">
-      <RiderTable {data} cols={COLS} />
-    </div>
-  {/if}
+  <div class="table">
+    <RiderTable data={rows} {cols} sortKey="current_ability" empty="Your shortlist is empty. Open any rider and press Shortlist to add them here." />
+  </div>
 </div>
 
+{#if confirmClear}
+  <Modal title="Clear the shortlist?" on:close={() => (confirmClear = false)}>
+    <p class="muted">All {rows.length} riders are removed from the shortlist. Your notes are kept.</p>
+    <div class="row">
+      <button class="btn" on:click={() => (confirmClear = false)}>Cancel</button>
+      <button class="btn btn-primary" on:click={() => { shortlist.set(new Set()); confirmClear = false; }}>Clear shortlist</button>
+    </div>
+  </Modal>
+{/if}
+
 <style>
-  .sl { display:flex; flex-direction:column; height:100%; overflow:hidden; }
-  .toolbar { display:flex; align-items:center; gap:10px; padding:10px 16px;
-             background:#0d1525; border-bottom:1px solid #111c30; flex-shrink:0; }
-  .hdr-text { font-size:11px; font-weight:700; color:#dce8ff; letter-spacing:0.06em; }
-  .count { font-size:11px; color:#3a4e72; }
-  .table-wrap { flex:1; overflow:hidden; }
-  .empty { display:flex; flex-direction:column; align-items:center; justify-content:center;
-           height:100%; color:#3a4e72; gap:12px; }
-  .empty p { font-size:13px; }
+  .actions { display: flex; gap: 6px; }
+  .table { position: relative; flex: 1; overflow: hidden; border-top: 1px solid var(--rule); }
+  .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 </style>

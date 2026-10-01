@@ -1,142 +1,92 @@
 <script lang="ts">
-  import { allCyclists, teams, teamRosters } from "../stores";
+  import { allCyclists, teams } from "../stores";
+  import { STAT_KEYS, STAT_LABELS, type Col } from "../types";
+  import { eurShort, teamColor } from "../format";
   import RiderTable from "../components/RiderTable.svelte";
-  import type { Col } from "../types";
-  import { fmtNat, flagEmoji } from "../format";
+  import Flag from "../components/Flag.svelte";
 
-  const RANK_COLS: Col[] = [
-    { key: "rank", label: "#", width: 40, align: "center" },
-    { key: "name", label: "Name", width: 190, align: "left" },
-    { key: "nat_flag", label: "Country", width: 130, align: "left", fmt: (_, r) => fmtNat(r) },
-    { key: "team_short", label: "Team", width: 150, align: "left" },
-    { key: "age", label: "Age", width: 44, align: "center" },
-    { key: "current_ability", label: "CA", width: 48, align: "center" },
-    { key: "potential", label: "Stars", width: 52, align: "center" },
-    { key: "rider_type", label: "Type", width: 110, align: "left" },
-    { key: "scout_grade", label: "Grade", width: 110, align: "left" },
-  ];
+  let tab: "riders" | "nations" | "teams" = "riders";
+  let metric = "current_ability";
+  let u23 = false;
 
   const METRICS = [
-    { key: "current_ability", label: "Current Ability", color: "#e8b800" },
-    { key: "potential", label: "Potential", color: "#f0c030" },
-    { key: "growth", label: "Growth Upside", color: "#2ecc82" },
-    { key: "flat", label: "Flat", color: "#c8e857" },
-    { key: "mountain", label: "Mountain", color: "#2ecc82" },
-    { key: "timetrial", label: "Time Trial", color: "#4d88f5" },
-    { key: "sprint", label: "Sprint", color: "#f0c030" },
-    { key: "cobble", label: "Cobbles", color: "#e87848" },
-    { key: "endurance", label: "Endurance", color: "#24b0a8" },
-    { key: "acceleration", label: "Acceleration", color: "#e85598" },
+    { key: "current_ability", label: "Current ability" },
+    { key: "potential", label: "Potential" },
+    { key: "growth", label: "Growth left" },
+    ...STAT_KEYS.map((k) => ({ key: k, label: STAT_LABELS[k] })),
   ];
 
-  let tab = 0;
-  let metric = "current_ability";
-
-  function setMetric(key: string, _color: string) {
-    metric = key;
-  }
-
-  $: ranked = [...$allCyclists]
-    .sort((a, b) => (b as unknown as Record<string, number>)[metric] - (a as unknown as Record<string, number>)[metric])
-    .slice(0, 100)
+  $: ranked = $allCyclists
+    .filter((c) => !u23 || (c.age > 0 && c.age <= 23))
+    .slice()
+    .sort((a, b) => ((b as any)[metric] - (a as any)[metric]) || b.current_ability - a.current_ability)
+    .slice(0, 200)
     .map((c, i) => ({ ...c, rank: i + 1 }));
 
-  $: countryRows = (() => {
-    const m: Record<string, { riders: typeof $allCyclists; iso: string }> = {};
-    $allCyclists.forEach((c) => {
-      if (!c.nationality || c.nationality === "Unknown") return;
-      if (!m[c.nationality]) m[c.nationality] = { riders: [], iso: c.iso };
-      m[c.nationality].riders.push(c);
-    });
-    return Object.entries(m)
-      .map(([nat, { riders, iso }]) => {
-        const avg = riders.reduce((s, r) => s + r.current_ability, 0) / riders.length;
-        const best = riders.sort((a, b) => b.current_ability - a.current_ability)[0];
-        return { nat, iso, count: riders.length, avgCA: avg, best };
-      })
-      .sort((a, b) => b.avgCA - a.avgCA)
-      .slice(0, 80)
-      .map((r, i) => ({ ...r, rank: i + 1 }));
+  $: cols = [
+    { key: "rank", label: "#", width: 50, align: "center" },
+    { key: "name", label: "Rider", width: 220, kind: "rider" },
+    { key: "team", label: "Team", width: 170, kind: "team" },
+    { key: "age", label: "Age", width: 50, align: "center" },
+    { key: "current_ability", label: "CA", width: 62, kind: "ca", align: "center" },
+    ...(metric !== "current_ability" ? [{ key: metric, label: METRICS.find((m) => m.key === metric)?.label ?? metric, width: 110, kind: metric === "potential" ? "stars" : metric === "growth" ? "upside" : "stat", align: "center" }] : []),
+    { key: "rider_type", label: "Type", width: 122, kind: "type" },
+    { key: "nationality", label: "Nation", width: 130, kind: "nation" },
+  ] as Col[];
+
+  $: nations = (() => {
+    const m = new Map<string, { flag: string; riders: number[]; best: string; bestCA: number }>();
+    for (const c of $allCyclists) {
+      if (c.nationality === "Unknown") continue;
+      const e = m.get(c.nationality) ?? { flag: c.flag, riders: [], best: "", bestCA: 0 };
+      e.riders.push(c.current_ability);
+      if (c.current_ability > e.bestCA) { e.bestCA = c.current_ability; e.best = c.name; }
+      m.set(c.nationality, e);
+    }
+    return [...m.entries()].map(([n, e]) => {
+      const top = e.riders.sort((a, b) => b - a).slice(0, 8);
+      return { n, flag: e.flag, count: e.riders.length, top8: top.reduce((a, b) => a + b, 0) / top.length, best: e.best, bestCA: e.bestCA };
+    }).filter((x) => x.count >= 3).sort((a, b) => b.top8 - a.top8);
   })();
 
-  $: teamRows = (() => {
-    return $teams
-      .map((t) => {
-        const roster = $teamRosters[t.id] ?? [];
-        if (!roster.length) return null;
-        const avg = roster.reduce((s, r) => s + r.current_ability, 0) / roster.length;
-        const best = [...roster].sort((a, b) => b.current_ability - a.current_ability)[0];
-        return { id: t.id, name: t.name, iso: t.country_iso, count: roster.length, avgCA: avg, best };
-      })
-      .filter(Boolean)
-      .sort((a, b) => b!.avgCA - a!.avgCA)
-      .slice(0, 80)
-      .map((r, i) => ({ ...r, rank: i + 1 }));
-  })();
+  $: teamRows = $teams.filter((t) => t.riders > 0).slice().sort((a, b) => b.avg_ca - a.avg_ca);
 </script>
 
-<div class="rank section-enter">
+<div class="page">
+  <div class="page-head">
+    <div><h1>Rankings</h1><p>Who leads the league on any attribute, plus nations and teams.</p></div>
+  </div>
   <div class="tabs">
-    {#each ["Individual", "Country Rankings", "Team Rankings"] as t, i}
-      <button class="tab" class:active={tab === i} on:click={() => (tab = i)}>{t}</button>
-    {/each}
+    <button class:on={tab === "riders"} on:click={() => (tab = "riders")}>Riders</button>
+    <button class:on={tab === "nations"} on:click={() => (tab = "nations")}>Nations</button>
+    <button class:on={tab === "teams"} on:click={() => (tab = "teams")}>Teams</button>
   </div>
 
-  {#if tab === 0}
-    <div class="metric-bar">
-      {#each METRICS as m}
-        <button
-          class="btn btn-type"
-          class:active={metric === m.key}
-          style:background={metric === m.key ? m.color : ""}
-          on:click={() => setMetric(m.key, m.color)}
-        >
-          {m.label}
-        </button>
-      {/each}
+  {#if tab === "riders"}
+    <div class="toolbar">
+      <select bind:value={metric} aria-label="Rank by">{#each METRICS as m}<option value={m.key}>{m.label}</option>{/each}</select>
+      <label class="chk"><input type="checkbox" bind:checked={u23} /> Under 23 only</label>
+      <span class="muted count">Top 200</span>
     </div>
-    <div class="table-wrap">
-      <RiderTable data={ranked} cols={RANK_COLS} />
-    </div>
-  {:else if tab === 1}
-    <div class="simple-table">
-      <table>
-        <thead>
-          <tr><th>#</th><th>Country</th><th>Riders</th><th>Avg CA</th><th>Best Rider</th><th>Best CA</th></tr>
-        </thead>
+    <div class="table">{#key metric}<RiderTable data={ranked} {cols} />{/key}</div>
+  {:else if tab === "nations"}
+    <div class="page-body">
+      <table class="grid-table">
+        <thead><tr><th class="c">#</th><th>Nation</th><th class="r">Riders</th><th class="r">Top-8 average CA</th><th>Best rider</th><th class="r">CA</th></tr></thead>
         <tbody>
-          {#each countryRows as r}
-            <tr>
-              <td style="text-align:center;color:#3a4e72">{r.rank}</td>
-              <td><span class="flag-emoji">{flagEmoji(r.iso)}</span>{r.nat}</td>
-              <td style="text-align:center">{r.count}</td>
-              <td style="text-align:center;color:#e8b800;font-weight:700">{r.avgCA.toFixed(1)}</td>
-              <td>{r.best?.name}</td>
-              <td style="text-align:center;color:#ffd700;font-weight:700">{r.best?.current_ability}</td>
-            </tr>
+          {#each nations as r, i}
+            <tr><td class="c muted">{i + 1}</td><td><Flag code={r.flag} /> {r.n}</td><td class="r">{r.count}</td><td class="r strong">{r.top8.toFixed(1)}</td><td>{r.best}</td><td class="r">{r.bestCA}</td></tr>
           {/each}
         </tbody>
       </table>
     </div>
   {:else}
-    <div class="simple-table">
-      <table>
-        <thead>
-          <tr><th>#</th><th>Team</th><th>Country</th><th>Riders</th><th>Avg CA</th><th>Best Rider</th><th>Best CA</th></tr>
-        </thead>
+    <div class="page-body">
+      <table class="grid-table">
+        <thead><tr><th class="c">#</th><th>Team</th><th>Division</th><th class="r">Riders</th><th class="r">Avg CA</th><th class="r">Best</th><th class="r">Budget</th><th class="r">Wages / mo</th></tr></thead>
         <tbody>
-          {#each teamRows as r}
-            {#if r}
-              <tr>
-                <td style="text-align:center;color:#3a4e72">{r.rank}</td>
-                <td style="font-weight:600;color:#dce8ff">{r.name}</td>
-                <td><span class="flag-emoji">{flagEmoji(r.iso)}</span>{r.iso.toUpperCase()}</td>
-                <td style="text-align:center">{r.count}</td>
-                <td style="text-align:center;color:#e8b800;font-weight:700">{r.avgCA.toFixed(1)}</td>
-                <td>{r.best?.name}</td>
-                <td style="text-align:center;color:#ffd700;font-weight:700">{r.best?.current_ability}</td>
-              </tr>
-            {/if}
+          {#each teamRows as t, i}
+            <tr class:mine={t.is_mine}><td class="c muted">{i + 1}</td><td><span class="sw" style="background:{teamColor(t.color1, t.id)}"></span>{t.name}</td><td class="muted">{t.division}</td><td class="r">{t.riders}</td><td class="r strong">{t.avg_ca}</td><td class="r">{t.top_ca}</td><td class="r">{eurShort(t.budget)}</td><td class="r">{eurShort(t.payroll)}</td></tr>
           {/each}
         </tbody>
       </table>
@@ -145,62 +95,13 @@
 </div>
 
 <style>
-  .rank {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  .tabs {
-    display: flex;
-    background: #111c30;
-    border-bottom: 1px solid #253550;
-    flex-shrink: 0;
-  }
-
-  .tab {
-    padding: 10px 18px;
-    background: none;
-    border: none;
-    color: #7284a8;
-    font-size: 13px;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    font-family: inherit;
-  }
-
-  .tab:hover {
-    color: #dce8ff;
-  }
-
-  .tab.active {
-    color: #e8b800;
-    border-bottom-color: #e8b800;
-  }
-
-  .metric-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 10px 16px;
-    background: #0d1525;
-    border-bottom: 1px solid #1c2d48;
-    flex-shrink: 0;
-  }
-
-  .table-wrap {
-    flex: 1;
-    overflow: hidden;
-  }
-
-  .simple-table {
-    flex: 1;
-    overflow: auto;
-    padding: 0 16px 16px;
-  }
-
-  .flag-emoji {
-    margin-right: 8px;
-  }
+  .tabs { display: flex; gap: 2px; padding: 0 22px 10px; }
+  .tabs button { background: none; border: none; border-bottom: 2px solid transparent; color: var(--ink-3); font: inherit; font-size: 13.5px; padding: 4px 12px 7px; cursor: pointer; }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--jaune); }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+  .count { margin-left: auto; font-size: 12px; }
+  .table { position: relative; flex: 1; overflow: hidden; border-top: 1px solid var(--rule); }
+  .strong { font-weight: 700; color: var(--jaune); }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 8px; }
+  tr.mine td { background: #f5c5180d; }
 </style>

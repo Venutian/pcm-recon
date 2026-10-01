@@ -1,35 +1,33 @@
 <script lang="ts">
+  import { statColor } from "../format";
   export let label = "";
-  export let cur   = 0;
-  export let pot   = 0;
-
-  function barColor(v: number) {
-    if (v >= 90) return "#ffd700";
-    if (v >= 80) return "#c8e857";
-    if (v >= 70) return "#2ecc82";
-    if (v >= 55) return "#e8b800";
-    return "#4a5e80";
-  }
-  $: col = barColor(cur);
+  export let cur = 0;
+  export let pot = 0;
+  export let best = false;
+  // Stats below 40 are rare, so the track starts there to make differences visible.
+  const LO = 40;
+  const pct = (v: number) => Math.max(0, Math.min(100, ((v - LO) / (100 - LO)) * 100));
+  $: col = statColor(cur);
 </script>
 
-<div class="row">
+<div class="row" class:best>
   <span class="lbl">{label}</span>
-  <div class="bar-wrap">
-    {#if pot > 0}
-      <div class="bar-pot" style="width:{pot}%"></div>
-    {/if}
-    <div class="bar-cur" style="width:{cur}%; background:{col}"></div>
+  <div class="track">
+    {#if pot > cur}<div class="pot" style="width:{pct(pot)}%"></div>{/if}
+    <div class="cur" style="width:{pct(cur)}%; background:{col}"></div>
   </div>
-  <span class="val" style="color:{col}">{cur}<span class="pot-lbl">/{pot}</span></span>
+  <span class="val">{cur}</span>
+  <span class="ceil" class:up={pot > cur}>{pot > cur ? `→ ${pot}` : ""}</span>
 </div>
 
 <style>
-  .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
-  .lbl { font-size: 11px; color: #6478a0; width: 110px; flex-shrink: 0; text-align: right; }
-  .bar-wrap { flex: 1; height: 10px; background: #111c30; border-radius: 5px; position: relative; overflow: hidden; }
-  .bar-pot { position: absolute; height: 100%; background: #1e2d4a; border-radius: 5px; }
-  .bar-cur { position: absolute; height: 100%; border-radius: 5px; transition: width 0.3s ease; }
-  .val { font-size: 11px; font-weight: 700; width: 46px; text-align: right; flex-shrink: 0; }
-  .pot-lbl { color: #3a4e72; font-weight: 400; }
+  .row { display: grid; grid-template-columns: 112px 1fr 26px 40px; align-items: center; gap: 8px; height: 22px; }
+  .lbl { font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .best .lbl { color: var(--ink); font-weight: 600; }
+  .track { position: relative; height: 6px; background: var(--bg-2); border-radius: 3px; overflow: hidden; }
+  .pot { position: absolute; inset: 0 auto 0 0; background: repeating-linear-gradient(135deg, #3a4558 0 3px, #283140 3px 6px); border-radius: 3px; }
+  .cur { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+  .val { font-family: var(--font-cond); font-weight: 700; font-size: 15px; text-align: right; }
+  .ceil { font-size: 11px; color: var(--ink-4); white-space: nowrap; }
+  .ceil.up { color: var(--vert); }
 </style>

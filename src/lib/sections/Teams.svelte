@@ -1,205 +1,154 @@
 <script lang="ts">
-  import { teams, teamRosters, teamColors } from "../stores";
+  import { teams, allCyclists, requestWrite } from "../stores";
+  import { eurShort, teamColor } from "../format";
+  import type { Col, Team, CellEdit } from "../types";
   import RiderTable from "../components/RiderTable.svelte";
-  import SummaryCard from "../components/SummaryCard.svelte";
-  import type { Col, Team } from "../types";
-  import { fmtNat, flagEmoji, resolveTeamColor } from "../format";
+  import MoneyEditor from "../components/MoneyEditor.svelte";
+  import Flag from "../components/Flag.svelte";
 
-  const COLS: Col[] = [
-    { key: "name", label: "Name", width: 200, align: "left" },
-    { key: "nat_flag", label: "Country", width: 130, align: "left", fmt: (_, r) => fmtNat(r) },
-    { key: "age", label: "Age", width: 44, align: "center" },
-    { key: "current_ability", label: "CA", width: 50, align: "center" },
-    { key: "potential", label: "Stars", width: 52, align: "center" },
-    { key: "growth", label: "Upside", width: 58, align: "center" },
-    { key: "rider_type", label: "Type", width: 110, align: "left" },
-    { key: "scout_grade", label: "Grade", width: 110, align: "left" },
+  let q = "";
+  let division = "";
+  let sort: "avg_ca" | "budget" | "payroll" | "name" = "avg_ca";
+  let selectedTeam: number | null = null;
+  let editing = false;
+
+  $: divisions = [...new Set($teams.map((t) => t.division))].filter(Boolean).sort();
+  $: list = $teams
+    .filter((t) => t.riders > 0 && (!q || t.name.toLowerCase().includes(q.toLowerCase())) && (!division || t.division === division))
+    .sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : (b[sort] as number) - (a[sort] as number)));
+  $: if (selectedTeam === null && $teams.length) selectedTeam = ($teams.find((t) => t.is_mine) ?? list[0])?.id ?? null;
+  $: team = $teams.find((t) => t.id === selectedTeam) ?? null;
+  $: roster = team ? $allCyclists.filter((c) => c.team_id === team!.id) : [];
+  $: maxBudget = Math.max(1, ...list.map((t) => t.budget));
+
+  function pick(t: Team) { selectedTeam = t.id; editing = false; }
+
+  function saveBudget(to: number) {
+    if (!team) return;
+    const edits: CellEdit[] = [{ table: "DYN_team", column: "value_i_budget", key_column: "IDteam", key: team.id, value: to }];
+    const lines = [{ label: `${team.name} season budget`, from: team.budget, to }];
+    if (team.sponsor_deal_id) {
+      edits.push({ table: "DYN_team_sponsor", column: "value_i_budget", key_column: "IDteam_sponsor", key: team.sponsor_deal_id, value: to });
+      lines.push({ label: `${team.sponsor || "Sponsor"} deal, this season`, from: team.sponsor_budget, to });
+    }
+    requestWrite({ title: "Change team budget", lines, edits, done: `${team.name} budget set to ${eurShort(to)}` });
+    editing = false;
+  }
+
+  const cols: Col[] = [
+    { key: "name", label: "Rider", width: 210, kind: "rider" },
+    { key: "age", label: "Age", width: 50, align: "center" },
+    { key: "current_ability", label: "CA", width: 62, kind: "ca", align: "center" },
+    { key: "potential", label: "Potential", width: 100, kind: "stars" },
+    { key: "rider_type", label: "Type", width: 122, kind: "type" },
+    { key: "wage", label: "Wage / mo", width: 86, kind: "money", align: "right" },
+    { key: "contract_end", label: "Contract", width: 74, kind: "contract", align: "center" },
+    { key: "mountain", label: "MO", width: 54, kind: "stat", align: "center" },
+    { key: "timetrial", label: "TT", width: 54, kind: "stat", align: "center" },
+    { key: "sprint", label: "SP", width: 54, kind: "stat", align: "center" },
+    { key: "cobble", label: "COB", width: 54, kind: "stat", align: "center" },
+    { key: "nationality", label: "Nation", width: 130, kind: "nation" },
   ];
-
-  let search = "";
-  let selected: Team | null = null;
-
-  $: filtered = $teams.filter((t) => !search || t.name.toLowerCase().includes(search.toLowerCase()));
-  $: roster = selected ? ($teamRosters[selected.id] ?? []).sort((a, b) => b.current_ability - a.current_ability) : [];
-  $: avgCA = roster.length ? (roster.reduce((s, r) => s + r.current_ability, 0) / roster.length).toFixed(1) : "-";
-  $: best = roster[0];
-  $: {
-    const m: Record<string, number> = {};
-    roster.forEach((r) => {
-      m[r.rider_type] = (m[r.rider_type] ?? 0) + 1;
-    });
-    topType = Object.entries(m).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "-";
-  }
-  let topType = "-";
-
-  function sel(t: Team) {
-    selected = t;
-  }
 </script>
 
-<div class="teams section-enter">
-  <div class="team-list">
-    <div class="list-hdr">TEAMS</div>
-    <input bind:value={search} placeholder="Search teams..." style="margin:8px 10px;width:calc(100% - 20px)" />
-    <div class="list-scroll">
-      {#each filtered as t}
-        {@const tc = resolveTeamColor(t.color1, t.id)}
-        <button class="team-btn" class:active={selected?.id === t.id} on:click={() => sel(t)}
-                style={selected?.id === t.id ? `border-left-color:${tc}` : ""}>
-          <span class="t-color-dot" style="background:{tc}"></span>
-          {@html flagEmoji(t.country_iso)}
-          <span class="t-name">{t.name}</span>
-          <span class="t-count">{$teamRosters[t.id]?.length ?? 0}</span>
-        </button>
-      {/each}
+<div class="page">
+  <div class="page-head">
+    <div>
+      <h1>Teams</h1>
+      <p>Every team in the league with its sponsor money and wage bill. You can change any team's season budget.</p>
     </div>
   </div>
+  <div class="split">
+    <aside class="list">
+      <div class="list-tools">
+        <input bind:value={q} placeholder="Search teams…" />
+        <div class="row">
+          <select bind:value={division}><option value="">All divisions</option>{#each divisions as d}<option>{d}</option>{/each}</select>
+          <select bind:value={sort} aria-label="Sort teams">
+            <option value="avg_ca">Avg CA</option><option value="budget">Budget</option><option value="payroll">Wages</option><option value="name">Name</option>
+          </select>
+        </div>
+      </div>
+      <ul>
+        {#each list as t (t.id)}
+          <li>
+            <button class:on={t.id === selectedTeam} on:click={() => pick(t)}>
+              <span class="sw" style="background:{teamColor(t.color1, t.id)}"></span>
+              <span class="tn">{t.name}{#if t.is_mine}<em>you</em>{/if}<small>{t.division} · {t.riders} riders</small></span>
+              <span class="tv">
+                {#if sort === "budget"}{eurShort(t.budget)}{:else if sort === "payroll"}{eurShort(t.payroll)}{:else}{t.avg_ca}{/if}
+                <span class="mini"><span style="width:{(t.budget / maxBudget) * 100}%"></span></span>
+              </span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </aside>
 
-  <div class="detail">
-    {#if !selected}
-      <div class="no-sel">Select a team from the list</div>
-    {:else}
-      <div class="team-hdr">
-        {@html flagEmoji(selected.country_iso)}
-        <span class="t-hname" style="color:{resolveTeamColor(selected.color1, selected.id)}">{selected.name}</span>
-        <span class="t-short">({selected.short})</span>
-      </div>
-      <div class="stat-cards">
-        <SummaryCard title="Riders" value={String(roster.length)} sub="Total squad" accent="#e8b800" />
-        <SummaryCard title="Avg CA" value={String(avgCA)} sub="Mean current ability" accent="#2ecc82" />
-        <SummaryCard title="Best CA" value={best ? String(best.current_ability) : "-"} sub={best?.name ?? "-"} accent="#ffd700" />
-        <SummaryCard title="Top Type" value={topType} sub="Most common type" accent="#9470f0" />
-        <SummaryCard title="Free" value={String(roster.filter((r) => r.free_agent).length)} sub="Free agents in squad" accent="#e87848" />
-      </div>
-      <div class="roster-table">
-        <RiderTable data={roster} cols={COLS} />
-      </div>
+    {#if team}
+      <section class="detail">
+        <div class="t-head">
+          <span class="jersey" style="background:{teamColor(team.color1, team.id)}; --c2:{team.color2 || 'transparent'}"></span>
+          <div>
+            <h2>{team.name}</h2>
+            <p class="muted"><Flag code={team.flag} size={12} /> {team.country_name} · {team.division}{team.sponsor ? ` · sponsor ${team.sponsor}` : ""}</p>
+          </div>
+        </div>
+        <dl class="facts">
+          <div><dt>Season budget</dt><dd>{eurShort(team.budget)}</dd></div>
+          <div><dt>Next season</dt><dd>{team.sponsor_budget_next ? eurShort(team.sponsor_budget_next) : "–"}</dd></div>
+          <div><dt>Rider wages</dt><dd>{eurShort(team.payroll)}<small>/mo</small></dd></div>
+          <div><dt>Staff wages</dt><dd>{eurShort(team.staff_payroll)}<small>/mo</small></dd></div>
+          <div><dt>Wages / budget</dt><dd class:neg={team.budget > 0 && (team.payroll + team.staff_payroll) * 12 > team.budget}>{team.budget ? Math.round(((team.payroll + team.staff_payroll) * 12 / team.budget) * 100) + "%" : "–"}</dd></div>
+          <div><dt>Avg CA</dt><dd>{team.avg_ca}</dd></div>
+          <div><dt>Best rider</dt><dd>{team.top_ca}</dd></div>
+          <div><dt>Sponsor deal ends</dt><dd>{team.sponsor_contract_end || "–"}</dd></div>
+        </dl>
+        <div class="edit">
+          {#if editing}
+            <MoneyEditor current={team.budget} min={0} max={200_000_000} steps={[-1_000_000, 500_000, 1_000_000, 2_500_000, 5_000_000]} on:apply={(e) => saveBudget(e.detail)} />
+            <button class="btn btn-sm btn-quiet" on:click={() => (editing = false)}>Cancel</button>
+          {:else}
+            <button class="btn btn-sm" on:click={() => (editing = true)}>Change season budget</button>
+          {/if}
+        </div>
+        <div class="roster"><RiderTable data={roster} {cols} sortKey="current_ability" /></div>
+      </section>
     {/if}
   </div>
 </div>
 
 <style>
-  .teams {
-    display: grid;
-    grid-template-columns: 260px 1fr;
-    height: 100%;
-    overflow: hidden;
+  .split { flex: 1; display: grid; grid-template-columns: 320px minmax(0, 1fr); overflow: hidden; border-top: 1px solid var(--rule); }
+  .list { border-right: 1px solid var(--rule); display: flex; flex-direction: column; overflow: hidden; }
+  .list-tools { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .list-tools .row { display: flex; gap: 6px; }
+  .list-tools select { flex: 1; }
+  ul { list-style: none; overflow-y: auto; flex: 1; padding: 0 6px 10px; }
+  li button {
+    width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 6px;
+    background: none; border: none; color: var(--ink); font: inherit; cursor: pointer; text-align: left;
   }
-
-  .team-list {
-    background: #111c30;
-    border-right: 1px solid #253550;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .list-hdr {
-    padding: 12px 14px 4px;
-    font-size: 10px;
-    font-weight: 700;
-    color: #4a5e80;
-    letter-spacing: 0.1em;
-    flex-shrink: 0;
-  }
-
-  .list-scroll {
-    flex: 1;
-    overflow-y: auto;
-  }
-
-  .t-color-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .team-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 9px 14px;
-    background: none;
-    border: none;
-    border-left: 2px solid transparent;
-    color: #7284a8;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.1s, border-left-color 0.1s;
-  }
-
-  .team-btn:hover {
-    background: #172035;
-    color: #dce8ff;
-  }
-
-  .team-btn.active {
-    background: #172035;
-    color: #dce8ff;
-  }
-
-  .t-name {
-    flex: 1;
-    font-size: 12px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .t-count {
-    font-size: 10px;
-    color: #4a5e80;
-  }
-
-  .detail {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding: 16px;
-    gap: 14px;
-  }
-
-  .no-sel {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: #4a5e80;
-  }
-
-  .team-hdr {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
-  }
-
-  .t-hname {
-    font-size: 20px;
-    font-weight: 700;
-    color: #dce8ff;
-  }
-
-  .t-short {
-    font-size: 13px;
-    color: #6478a0;
-  }
-
-  .stat-cards {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 10px;
-    flex-shrink: 0;
-  }
-
-  .roster-table {
-    flex: 1;
-    overflow: hidden;
-    background: #0f1829;
-    border: 1px solid #1e2d4a;
-    border-radius: 8px;
-  }
+  li button:hover { background: var(--panel); }
+  li button.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--jaune); }
+  .sw { width: 10px; height: 26px; border-radius: 2px; flex-shrink: 0; }
+  .tn { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; flex-direction: column; }
+  .tn em { font-style: normal; font-size: 10px; color: var(--jaune); margin-left: 6px; }
+  .tn small { font-size: 11px; color: var(--ink-3); font-weight: 400; }
+  .tv { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-family: var(--font-cond); font-weight: 700; font-size: 15px; }
+  .mini { width: 46px; height: 3px; background: var(--rule); border-radius: 2px; overflow: hidden; display: block; }
+  .mini span { display: block; height: 100%; background: var(--ink-3); }
+  .detail { display: flex; flex-direction: column; overflow: hidden; padding: 16px 0 0; }
+  .t-head { display: flex; gap: 14px; align-items: center; padding: 0 20px; }
+  .jersey { width: 34px; height: 40px; border-radius: 7px 7px 4px 4px; box-shadow: inset 0 -9px 0 var(--c2); flex-shrink: 0; }
+  .t-head h2 { font-size: 26px; }
+  .t-head p { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 18px; padding: 16px 20px 6px; }
+  dt { font-size: 11px; color: var(--ink-3); }
+  dd { font-family: var(--font-cond); font-size: 21px; font-weight: 700; }
+  dd small { font-family: var(--font); font-size: 11px; color: var(--ink-3); font-weight: 400; margin-left: 2px; }
+  .neg { color: var(--pois); }
+  .edit { padding: 8px 20px 14px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .edit :global(.ed) { width: 100%; }
+  .roster { position: relative; flex: 1; border-top: 1px solid var(--rule); overflow: hidden; min-height: 200px; }
 </style>

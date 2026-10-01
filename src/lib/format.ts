@@ -1,184 +1,110 @@
-import type { Cyclist } from "./types";
+import type { Cyclist, StatKey } from "./types";
+import { TERRAINS } from "./types";
 
-export function flagEmoji(iso: string): string {
-  const a2 = toAlpha2(iso).toLowerCase();
-  if (!a2) return "";
-  return `<span class="fi fi-${a2}" style="width:20px;height:15px;display:inline-block;vertical-align:middle;margin-right:6px;background-size:cover;background-position:center"></span>`;
+const eur0 = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
+
+/** Full euro amount: €1,234,567 / −€368,630 */
+export function eur(v: number): string {
+  const sign = v < 0 ? "−" : "";
+  return `${sign}€${eur0.format(Math.abs(Math.round(v)))}`;
 }
 
-const ALPHA2: Record<string, string> = {
-  alb: "AL",
-  and: "AD",
-  arg: "AR",
-  arm: "AM",
-  aus: "AU",
-  aut: "AT",
-  aze: "AZ",
-  bel: "BE",
-  blr: "BY",
-  bol: "BO",
-  bra: "BR",
-  bul: "BG",
-  can: "CA",
-  chl: "CL",
-  cmr: "CM",
-  col: "CO",
-  crc: "CR",
-  cro: "HR",
-  cub: "CU",
-  cyp: "CY",
-  cze: "CZ",
-  den: "DK",
-  dom: "DO",
-  dza: "DZ",
-  ecu: "EC",
-  egy: "EG",
-  eri: "ER",
-  esp: "ES",
-  est: "EE",
-  eth: "ET",
-  fin: "FI",
-  fra: "FR",
-  gab: "GA",
-  gbr: "GB",
-  geo: "GE",
-  ger: "DE",
-  gha: "GH",
-  gre: "GR",
-  hun: "HU",
-  idn: "ID",
-  ind: "IN",
-  irl: "IE",
-  irn: "IR",
-  isl: "IS",
-  isr: "IL",
-  ita: "IT",
-  jam: "JM",
-  jpn: "JP",
-  kaz: "KZ",
-  ken: "KE",
-  kgz: "KG",
-  kor: "KR",
-  kos: "XK",
-  lat: "LV",
-  lie: "LI",
-  ltu: "LT",
-  lux: "LU",
-  mar: "MA",
-  mas: "MY",
-  mco: "MC",
-  mex: "MX",
-  mkd: "MK",
-  mlt: "MT",
-  mne: "ME",
-  mol: "MD",
-  ned: "NL",
-  nga: "NG",
-  nor: "NO",
-  nzl: "NZ",
-  pak: "PK",
-  per: "PE",
-  pol: "PL",
-  por: "PT",
-  qat: "QA",
-  rou: "RO",
-  rsa: "ZA",
-  rus: "RU",
-  rwa: "RW",
-  sau: "SA",
-  sen: "SN",
-  ser: "RS",
-  sgp: "SG",
-  slo: "SI",
-  smr: "SM",
-  svk: "SK",
-  swe: "SE",
-  swi: "CH",
-  tha: "TH",
-  tto: "TT",
-  tun: "TN",
-  tur: "TR",
-  twn: "TW",
-  uae: "AE",
-  uga: "UG",
-  ukr: "UA",
-  uru: "UY",
-  usa: "US",
-  uzb: "UZ",
-  ven: "VE",
-  vnm: "VN",
-  zim: "ZW",
-  civ: "CI",
-  ben: "BJ",
-  bfa: "BF",
-  cod: "CD",
-};
-
-export function toAlpha2(iso3: string): string {
-  return ALPHA2[iso3.toLowerCase()] ?? "";
+/** Compact euro amount: €2.27M, −€369k, €850 */
+export function eurShort(v: number): string {
+  const sign = v < 0 ? "−" : "";
+  const a = Math.abs(v);
+  if (a >= 1_000_000) return `${sign}€${(a / 1_000_000).toFixed(a >= 10_000_000 ? 1 : 2)}M`;
+  if (a >= 10_000) return `${sign}€${Math.round(a / 1000)}k`;
+  if (a >= 1_000) return `${sign}€${(a / 1000).toFixed(1)}k`;
+  return `${sign}€${Math.round(a)}`;
 }
 
-export function fmtStars(v: number): string {
-  if (!v) return "-";
+export function signedEur(v: number): string {
+  return (v > 0 ? "+" : "") + eurShort(v);
+}
+
+/** Parses "1.5m", "250k", "-368,630", "€2 000 000" into euros. */
+export function parseMoney(input: string): number | null {
+  const s = input.trim().toLowerCase().replace(/[€\s,_]/g, "").replace(/−/g, "-");
+  const m = s.match(/^([+-]?\d+(?:\.\d+)?)([km]?)$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]) * (m[2] === "m" ? 1_000_000 : m[2] === "k" ? 1_000 : 1);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+export function stars(v: number): string {
+  if (!v) return "–";
   return v.toFixed(1).replace(/\.0$/, "");
 }
 
-export function fmtUpside(v: number): string {
-  if (!v || v <= 0) return "-";
-  return `+${v.toFixed(1).replace(/\.0$/, "")}`;
+export function fmtDate(iso: string): string {
+  if (!iso) return "–";
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function fmtNatParts(c: Cyclist): { flagHtml: string; nationality: string } {
-  return {
-    flagHtml: flagEmoji(c.iso),
-    nationality: c.nationality || "Unknown",
-  };
+export function timeAgo(ms: number): string {
+  const s = (Date.now() - ms) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  const d = new Date(ms);
+  return d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-export function fmtNat(c: Cyclist): string {
-  return fmtNatParts(c).nationality;
+export function stat(c: Cyclist, key: string): number {
+  return (c as unknown as Record<string, number>)[key] ?? 0;
 }
 
-export function rowClass(ca: number, free: boolean): string {
-  if (ca >= 87) return "row-elite";
-  if (ca >= 78) return "row-great";
-  if (ca >= 68) return "row-good";
-  if (free) return "row-free";
-  return "row-avg";
+export function terrainScore(c: Cyclist, stats: StatKey[], ceiling = false): number {
+  const vals = stats.map((k) => stat(c, ceiling ? `${k}_p` : k));
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
 
-export function valFor(c: Cyclist, key: string): string {
-  switch (key) {
-    case "nat_flag":
-      return fmtNat(c);
-    case "potential":
-      return fmtStars(c.potential);
-    case "growth":
-      return fmtUpside(c.growth);
-    case "top_skill_text":
-      return c.top_skills.slice(0, 2).map((s) => `${s.label} ${s.value}`).join(" | ");
-    default:
-      return String((c as Record<string, unknown>)[key] ?? "");
-  }
+export function terrainProfile(c: Cyclist, ceiling = false): number[] {
+  return TERRAINS.map((t) => terrainScore(c, t.stats, ceiling));
 }
 
-export function inText(hay: unknown, needle: string): boolean {
-  return String(hay ?? "").toLowerCase().includes(needle);
+/** CA bib colour band: the bib is white; the stripe under the number signals level. */
+export function caBand(ca: number): string {
+  if (ca >= 80) return "#f5c518";
+  if (ca >= 75) return "#3dbe6e";
+  if (ca >= 70) return "#5aa8e6";
+  if (ca >= 65) return "#8692a3";
+  return "#4f5a6a";
 }
 
-export function teamColorFromId(id: number): string {
-  if (!id || id <= 0) return "#4a5e80";
+export function statColor(v: number): string {
+  if (v >= 80) return "#f5c518";
+  if (v >= 75) return "#3dbe6e";
+  if (v >= 70) return "#5aa8e6";
+  if (v >= 62) return "#8692a3";
+  return "#4f5a6a";
+}
+
+/** Gap between true potential and what the scout report shows. Positive = underrated. */
+export function gemGap(c: Cyclist): number {
+  if (!c.scout_estimate) return 0;
+  return Math.round((c.potential - c.scout_estimate) * 10) / 10;
+}
+
+export function matches(c: Cyclist, q: string): boolean {
+  if (!q) return true;
+  const s = q.toLowerCase();
+  return (
+    c.name.toLowerCase().includes(s) ||
+    c.team.toLowerCase().includes(s) ||
+    c.nationality.toLowerCase().includes(s) ||
+    c.rider_type.toLowerCase().includes(s)
+  );
+}
+
+export function teamColor(color: string | undefined, id: number): string {
+  if (color && color !== "#000000") return color;
   const hue = Math.abs((id * 137) % 360);
-  return `hsl(${hue}, 58%, 52%)`;
+  return `hsl(${hue} 55% 55%)`;
 }
 
-export function teamColorBgFromId(id: number): string {
-  if (!id || id <= 0) return "#111c30";
-  const hue = Math.abs((id * 137) % 360);
-  return `hsl(${hue}, 32%, 13%)`;
-}
-
-export function resolveTeamColor(color1: string, teamId: number): string {
-  if (color1 && color1 !== "#000000") return color1;
-  return teamColorFromId(teamId);
+export function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
 }

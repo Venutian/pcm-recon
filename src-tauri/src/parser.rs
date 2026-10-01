@@ -1,92 +1,20 @@
-/// PCM Recon — binary .cdb parser (Rust port of extract_pcm.py)
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use flate2::read::ZlibDecoder;
-use std::io::Read;
+//! Turns a parsed PCM database into the scouting model the UI works with.
+use crate::cdb::Cdb;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 
-// ─── Layout constants ─────────────────────────────────────────────────────────
-const NUM_CYCLISTS: usize = 0xAFE0 / 4; // 11 256
-const TEAM_COUNT:   usize = 313;
-const REGION_COUNT: usize = 241;
 const FREE_AGENT_TEAM_ID: i32 = 119;
 
-const AA: [u8; 4] = [0xAA, 0xAA, 0xAA, 0xAA];
-const BB: [u8; 4] = [0xBB, 0xBB, 0xBB, 0xBB];
-
-// Cyclist int-column offsets
-const OFF_ID:          usize = 0x46184;
-const OFF_TEAM:        usize = 0xB7B10;
-const OFF_REGION:      usize = 0xC2B6C;
-const OFF_BIRTHDATE:   usize = 0x102460;
-const OFF_TYPE_RIDER:  usize = 0x170890;
-const OFF_SIZE:        usize = 0x1919AC;
-const OFF_WEIGHT:      usize = 0x19CA10;
-const OFF_FLAT:        usize = 0x1D3C24;
-const OFF_FLAT_P:      usize = 0x1DEC88;
-const OFF_MTN:         usize = 0x1E9CF4;
-const OFF_MTN_P:       usize = 0x1F4D60;
-const OFF_MED_MTN:     usize = 0x1FFDCC + 0x10;
-const OFF_MED_MTN_P:   usize = 0x20AE50;
-const OFF_DOWNHILL:    usize = 0x215EC4;
-const OFF_DOWNHILL_P:  usize = 0x220F30;
-const OFF_COBBLE:      usize = 0x22BF94;
-const OFF_COBBLE_P:    usize = 0x236FF8;
-const OFF_TT:          usize = 0x242064;
-const OFF_TT_P:        usize = 0x24D0D0;
-const OFF_PROLOGUE:    usize = 0x25813C;
-const OFF_PROLOGUE_P:  usize = 0x2631A8;
-const OFF_SPRINT:      usize = 0x26E20C;
-const OFF_SPRINT_P:    usize = 0x279270;
-const OFF_ACCEL:       usize = 0x2842E4;
-const OFF_ACCEL_P:     usize = 0x28F358;
-const OFF_ENDURANCE:   usize = 0x29A3C4;
-const OFF_ENDURANCE_P: usize = 0x2A5430;
-const OFF_RESISTANCE:  usize = 0x2B049C;
-const OFF_RESISTANCE_P:usize = 0x2BB508;
-const OFF_RECUP:       usize = 0x2C657C;
-const OFF_RECUP_P:     usize = 0x2D15F0;
-const OFF_HILL:        usize = 0x2DC654;
-const OFF_HILL_P:      usize = 0x2E76B8;
-const OFF_BAROUDEUR:   usize = 0x2F2724;
-const OFF_BAROUDEUR_P: usize = 0x2FD790;
-
-// Float columns
-const OFF_POTENTIAL:       usize = 0x12E618;
-const OFF_CURRENT_ABILITY: usize = 0x13968C;
-
-// String columns (lengths_start, data_start)
-const OFF_LASTNAME_LEN:  usize = 0x511F0;
-const OFF_LASTNAME_DATA: usize = 0x5C1D4;
-const OFF_FIRSTNAME_LEN: usize = 0x713EC;
-const OFF_FIRSTNAME_DATA:usize = 0x7C3D0;
-const OFF_FULLNAME_LEN:  usize = 0x8F2C4;
-const OFF_FULLNAME_DATA: usize = 0x9A2A8;
-
-// Teams
-const OFF_TEAM_REGION:      usize = 0x7BD748;
-const OFF_TEAM_REGION_END:  usize = 0x7BD748 + 0x30E38;
-const OFF_TEAM_NAME_LEN:    usize = 0x7BF404;
-const OFF_TEAM_NAME_DATA:   usize = 0x7BF8EC;
-const OFF_TEAM_SHORT_LEN:   usize = 0x7BDDE8;
-const OFF_TEAM_SHORT_DATA:  usize = 0x7BE2D0;
-
-// Countries / regions
-const OFF_COUNTRY_CODES: usize = 0xA061E4;
-const COUNTRY_COUNT:     usize = 145;
-const OFF_REGION_POS:    usize = 0xA4CAB8;
-const OFF_REGION_END:    usize = 0xA66544;
-const OFF_SAVE_META_POS: usize = 0xA01C74;
-const OFF_SAVE_META_END: usize = 0xA02040;
-
 // ─── Output types ─────────────────────────────────────────────────────────────
-#[derive(Debug, Serialize, Deserialize, Clone)]
+
+#[derive(Debug, Serialize, Clone)]
 pub struct TopSkill {
-    pub key:   String,
+    pub key: String,
     pub label: String,
     pub value: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone, Default)]
 pub struct Cyclist {
     pub id: i32,
     pub name: String,
@@ -95,11 +23,17 @@ pub struct Cyclist {
     pub team_id: i32,
     pub team: String,
     pub team_short: String,
+    pub division: String,
     pub nationality: String,
     pub continent: String,
     pub iso: String,
+    pub flag: String,
     pub birthdate: String,
     pub age: i32,
+    /// PCM lets you sign a rider from the season in which they turn 18 (the month doesn't matter).
+    pub signable: bool,
+    /// First season the rider can be signed (birth year + 18).
+    pub signable_from: i32,
     pub rider_type: String,
     pub rider_type_id: i32,
     pub size: i32,
@@ -113,6 +47,7 @@ pub struct Cyclist {
     pub specialty_rating: i32,
     pub scout_grade: String,
     pub free_agent: bool,
+    pub is_mine: bool,
     pub flat: i32,        pub flat_p: i32,
     pub mountain: i32,    pub mountain_p: i32,
     pub med_mtn: i32,     pub med_mtn_p: i32,
@@ -127,6 +62,27 @@ pub struct Cyclist {
     pub recuperation: i32,pub recuperation_p: i32,
     pub hill: i32,        pub hill_p: i32,
     pub baroudeur: i32,   pub baroudeur_p: i32,
+    pub top_skills: Vec<TopSkill>,
+    /// Monthly wage in euros (0 when unsigned).
+    pub wage: i32,
+    pub contract_start: i32,
+    /// Last season of the current contract (0 when unsigned).
+    pub contract_end: i32,
+    pub popularity: f32,
+    pub wins: i32,
+    pub tour_rating: i32,
+    pub classic_rating: i32,
+    pub injured: bool,
+    pub will_retire: bool,
+    /// Listed on the in-game transfer market (free agent or contract ending this season).
+    pub on_market: bool,
+    /// Number of scout reports filed on this rider by any team.
+    pub scout_reports: i32,
+    /// Whether one of your own scouts has reported on this rider.
+    pub my_report: bool,
+    pub scout_report_date: String,
+    /// Best category estimate (stars) from the report shown.
+    pub scout_estimate: f32,
     pub scout_tour_potential: f32,
     pub scout_mountain_potential: f32,
     pub scout_timetrial_potential: f32,
@@ -134,1001 +90,790 @@ pub struct Cyclist {
     pub scout_ardennes_potential: f32,
     pub scout_cobble_potential: f32,
     pub scout_flat_potential: f32,
-    pub top_skills: Vec<TopSkill>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone, Default)]
 pub struct Team {
     pub id: i32,
     pub name: String,
     pub short: String,
+    pub abbreviation: String,
     pub country_iso: String,
     pub country_name: String,
+    pub flag: String,
     pub color1: String,
     pub color2: String,
+    pub division_id: i32,
+    pub division: String,
+    pub tier: i32,
+    /// Season budget granted by the sponsor (`DYN_team.value_i_budget`).
+    pub budget: i32,
+    pub sponsor_id: i32,
+    /// Row id in `DYN_team_sponsor` (0 when the team has no sponsor deal).
+    pub sponsor_deal_id: i32,
+    pub sponsor: String,
+    pub sponsor_budget: i32,
+    pub sponsor_budget_next: i32,
+    pub sponsor_contract_end: i32,
+    /// Monthly rider wages.
+    pub payroll: i32,
+    /// Monthly staff wages (coaches, physicians, scouts).
+    pub staff_payroll: i32,
+    pub riders: i32,
+    pub avg_ca: f32,
+    pub top_ca: f32,
+    pub evaluation: f32,
+    pub is_mine: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Clone)]
+pub struct Staff {
+    pub id: i32,
+    pub role: String,
+    pub name: String,
+    pub wage: i32,
+    pub contract_end: i32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct BrandDeal {
+    pub id: i32,
+    pub brand: String,
+    pub category: String,
+    pub budget: i32,
+    pub year: i32,
+    pub years_left: i32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SponsorOffer {
+    pub sponsor_id: i32,
+    pub sponsor: String,
+    pub budget: i32,
+    pub duration: i32,
+    pub contact_date: String,
+    pub deadline: String,
+    pub state: i32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct LedgerEntry {
+    pub id: i32,
+    pub date: String,
+    pub amount: i32,
+    pub category: String,
+    pub label: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Finance {
+    pub team_id: i32,
+    /// Cash balance shown in-game (`GAM_career_data` → `SOLDE`).
+    pub balance: f64,
+    pub balance_editable: bool,
+    pub season_budget: i32,
+    pub sponsor_id: i32,
+    pub sponsor_deal_id: i32,
+    pub sponsor: String,
+    pub sponsor_budget: i32,
+    pub sponsor_budget_next: i32,
+    pub sponsor_contract_start: i32,
+    pub sponsor_contract_end: i32,
+    pub monthly_rider_wages: i32,
+    pub monthly_staff_wages: i32,
+    pub staff: Vec<Staff>,
+    pub brands: Vec<BrandDeal>,
+    pub offers: Vec<SponsorOffer>,
+    pub ledger: Vec<LedgerEntry>,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct SaveMeta {
+    pub path: String,
+    pub file_name: String,
+    pub game_date: String,
+    pub season: i32,
+    pub mod_name: String,
+    pub game_version: String,
+    pub user_team_id: i32,
+    pub user_team: String,
+    pub manager: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SaveData {
-    pub cyclists:  Vec<Cyclist>,
-    pub scout_reports: Vec<Cyclist>,
-    pub teams:     Vec<Team>,
+    pub meta: SaveMeta,
+    pub cyclists: Vec<Cyclist>,
+    pub teams: Vec<Team>,
+    pub finance: Option<Finance>,
+    /// Kept for older frontends: same as `meta.game_date`.
     pub game_date: String,
 }
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
-struct Date { year: i32, month: i32, day: i32 }
+// ─── Small helpers ────────────────────────────────────────────────────────────
 
-fn parse_date_int(v: i32) -> Option<Date> {
-    if v <= 19000101 || v >= 22000101 { return None; }
-    let year  = v / 10000;
-    let month = (v % 10000) / 100;
-    let day   = v % 100;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) { return None; }
-    Some(Date { year, month, day })
+/// Column accessor that substitutes zeros/empties when a column is missing,
+/// so older or modded databases still load.
+struct Rows<'a> {
+    db: &'a Cdb,
+    table: &'static str,
+    len: usize,
 }
 
-fn age_at(birth: i32, ref_date: &Date) -> i32 {
-    let b = match parse_date_int(birth) { Some(d) => d, None => return 0 };
-    let mut age = ref_date.year - b.year;
-    if ref_date.month < b.month || (ref_date.month == b.month && ref_date.day < b.day) {
+impl<'a> Rows<'a> {
+    fn new(db: &'a Cdb, table: &'static str) -> Self {
+        Rows { db, table, len: db.rows(table) }
+    }
+    fn int(&self, col: &str) -> Vec<i32> {
+        self.db.ints(self.table, col).unwrap_or_else(|| vec![0; self.len])
+    }
+    fn float(&self, col: &str) -> Vec<f32> {
+        self.db.floats(self.table, col).unwrap_or_else(|| vec![0.0; self.len])
+    }
+    fn text(&self, col: &str) -> Vec<String> {
+        self.db.strings(self.table, col).unwrap_or_else(|| vec![String::new(); self.len])
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Date {
+    year: i32,
+    month: i32,
+    day: i32,
+}
+
+fn parse_date(v: i32) -> Option<Date> {
+    if !(19000101..22000101).contains(&v) {
+        return None;
+    }
+    let (year, month, day) = (v / 10000, (v % 10000) / 100, v % 100);
+    ((1..=12).contains(&month) && (1..=31).contains(&day)).then_some(Date { year, month, day })
+}
+
+fn date_text(v: i32) -> String {
+    parse_date(v)
+        .map(|d| format!("{:04}-{:02}-{:02}", d.year, d.month, d.day))
+        .unwrap_or_default()
+}
+
+fn age_at(birth: i32, now: Date) -> i32 {
+    let Some(b) = parse_date(birth) else { return 0 };
+    let mut age = now.year - b.year;
+    if now.month < b.month || (now.month == b.month && now.day < b.day) {
         age -= 1;
     }
-    if age < 0 || age >= 100 { 0 } else { age }
+    if (0..100).contains(&age) { age } else { 0 }
 }
 
-fn date_text(d: &Date) -> String {
-    format!("{:04}-{:02}-{:02}", d.year, d.month, d.day)
+fn round1(v: f32) -> f32 {
+    (v * 10.0).round() / 10.0
 }
 
-// ─── Binary reading helpers ───────────────────────────────────────────────────
-fn read_i32(data: &[u8], off: usize) -> i32 {
-    i32::from_le_bytes(data[off..off+4].try_into().unwrap_or_default())
-}
-fn read_u32(data: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes(data[off..off+4].try_into().unwrap_or_default())
-}
-fn read_f32(data: &[u8], off: usize) -> f32 {
-    f32::from_le_bytes(data[off..off+4].try_into().unwrap_or_default())
-}
-
-fn read_ints(data: &[u8], start: usize, count: usize) -> Vec<i32> {
-    (0..count).map(|i| read_i32(data, start + i*4)).collect()
-}
-fn read_uints(data: &[u8], start: usize, count: usize) -> Vec<u32> {
-    (0..count).map(|i| read_u32(data, start + i*4)).collect()
-}
-fn read_floats(data: &[u8], start: usize, count: usize) -> Vec<f32> {
-    (0..count).map(|i| read_f32(data, start + i*4)).collect()
-}
-
-fn count_sequential_ids(data: &[u8], start: usize, max_rows: usize) -> usize {
-    if start == 0 || start + 4 > data.len() {
-        return 0;
-    }
-
-    let mut count = 0usize;
-    for i in 0..max_rows {
-        let off = start + i * 4;
-        if off + 4 > data.len() {
-            break;
-        }
-        if read_i32(data, off) != (i as i32) + 1 {
-            break;
-        }
-        count += 1;
-    }
-    count
-}
-
-fn read_strings(data: &[u8], len_start: usize, data_start: usize, count: usize) -> Vec<String> {
-    let mut pos = data_start;
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        let len = read_u32(data, len_start + i*4) as usize;
-        if len == 0 || len > 300 || pos + len > data.len() {
-            out.push(String::new());
-        } else {
-            out.push(decode_pcm_text(&data[pos..pos+len]));
-            pos += len;
-        }
-    }
-    out
-}
-
-fn read_nullterm(data: &[u8], start: usize, count: usize) -> Vec<String> {
-    let mut pos = start;
-    let mut out = Vec::with_capacity(count);
-    for _ in 0..count {
-        let end = data[pos..].iter().position(|&b| b == 0).map(|e| pos+e).unwrap_or(pos+4);
-        if end > data.len() { out.push(String::new()); break; }
-        out.push(decode_pcm_text(&data[pos..end]));
-        pos = end + 1;
-    }
-    out
-}
-
-// ─── Column finder (matches Python find_col / find_type22_data) ───────────────
-fn find_pattern(data: &[u8], pattern: &[u8], from: usize, to: usize) -> Option<usize> {
-    let to = to.min(data.len());
-    data[from..to].windows(pattern.len()).position(|w| w == pattern).map(|p| p + from)
-}
-
-fn find_type22_data(data: &[u8], col_pos: usize, search_range: usize) -> Option<usize> {
-    let mut pos = col_pos + 4;
-    for _ in 0..25 {
-        let limit = col_pos + search_range;
-        let idx = find_pattern(data, &AA, pos, limit)?;
-        if idx + 12 < data.len() {
-            let block_type = read_u32(data, idx + 8);
-            if block_type == 0x22 {
-                if let Some(bb_pos) = find_pattern(data, &BB, idx, idx + 80) {
-                    if bb_pos + 4 <= data.len() {
-                        return Some(bb_pos + 4);
-                    }
-                }
-            }
-        }
-        pos = idx + 4;
-    }
-    None
-}
-
-fn find_col(data: &[u8], start: usize, end: usize, name: &[u8]) -> Option<usize> {
-    let mut pos = start;
-    while pos < end {
-        let idx = find_pattern(data, &AA, pos, end)?;
-        if idx + 24 < data.len() {
-            let block_type  = read_u32(data, idx + 8);
-            let header_num  = read_u32(data, idx + 16);
-            if block_type == 0x20 && header_num == 1 {
-                let name_len = read_u32(data, idx + 20) as usize;
-                if name_len > 0 && name_len < 100 && idx + 24 + name_len <= data.len() {
-                    let found = &data[idx + 24 .. idx + 24 + name_len];
-                    let found = found.split(|&b| b == 0).next().unwrap_or(found);
-                    if found == name {
-                        return find_type22_data(data, idx, 800);
-                    }
-                }
-            }
-        }
-        pos = idx + 4;
-    }
-    None
-}
-
-fn find_cols(data: &[u8], start: usize, end: usize, name: &[u8]) -> Vec<usize> {
-    let mut pos = start;
-    let mut out = Vec::new();
-    while pos < end {
-        let Some(idx) = find_pattern(data, &AA, pos, end) else { break };
-        if idx + 24 < data.len() {
-            let block_type = read_u32(data, idx + 8);
-            let header_num = read_u32(data, idx + 16);
-            if block_type == 0x20 && header_num == 1 {
-                let name_len = read_u32(data, idx + 20) as usize;
-                if name_len > 0 && name_len < 100 && idx + 24 + name_len <= data.len() {
-                    let found = &data[idx + 24 .. idx + 24 + name_len];
-                    let found = found.split(|&b| b == 0).next().unwrap_or(found);
-                    if found == name {
-                        if let Some(col) = find_type22_data(data, idx, 800) {
-                            out.push(col);
-                        }
-                    }
-                }
-            }
-        }
-        pos = idx + 4;
-    }
-    out
-}
-
-fn pick_col(cols: &[usize], min_after: usize, fallback: usize) -> usize {
-    cols.iter()
-        .copied()
-        .find(|&col| col > min_after)
-        .or_else(|| cols.first().copied())
-        .unwrap_or(fallback)
-}
-
-fn string_quality_score(s: &str) -> isize {
-    let s = s.trim();
-    if s.is_empty() { return -12; }
-    if looks_like_garbage(s) { return -25; }
-
-    let mut score = 0isize;
-    if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) { score += 6; }
-    if s.len() >= 2 { score += 4; }
-    if s.len() >= 4 { score += 4; }
-    if s.chars().all(|c| c.is_alphabetic() || " .'-".contains(c)) { score += 8; }
-    if s.starts_with(' ') || s.ends_with(' ') { score -= 8; }
-    if s.chars().next().map(|c| c.is_lowercase()).unwrap_or(false) { score -= 6; }
-    score
-}
-
-fn is_good_string_start(db: &[u8], len_start: usize, data_start: usize) -> bool {
-    let mut pos = data_start;
-    let mut good = 0usize;
-    let mut total = 0usize;
-    for i in 0..40 {
-        if len_start + i * 4 + 4 > db.len() { break; }
-        let len = read_u32(db, len_start + i * 4) as usize;
-        if len == 0 { continue; }
-        total += 1;
-        if len > 60 || pos + len > db.len() { return false; }
-        // PCM stores null-terminated strings: last byte of the len slot must be 0x00.
-        // This is a structural check that's much more reliable than capitalization heuristics.
-        if db[pos + len - 1] != 0 { return false; }
-        let s = decode_pcm_text(&db[pos..pos + len]);
-        pos += len;
-        if s.len() >= 2 && !looks_like_garbage(&s) {
-            good += 1;
-        }
-        if total >= 20 { break; }
-    }
-    total >= 8 && good * 100 / total >= 70
-}
-
-fn string_start_score(db: &[u8], len_start: usize, data_start: usize) -> isize {
-    let mut pos = data_start;
-    let mut total = 0usize;
-    let mut score = 0isize;
-
-    for i in 0..40 {
-        if len_start + i * 4 + 4 > db.len() { break; }
-        let len = read_u32(db, len_start + i * 4) as usize;
-        if len == 0 { continue; }
-        if len > 80 || pos + len > db.len() || db[pos + len - 1] != 0 {
-            return -10_000;
-        }
-        let s = decode_pcm_text(&db[pos..pos + len]);
-        pos += len;
-        total += 1;
-        score += string_quality_score(&s);
-        if total >= 24 { break; }
-    }
-
-    if total < 8 { -10_000 } else { score }
-}
-
-fn string_data_start(db: &[u8], len_start: usize, count: usize) -> usize {
-    let guessed = len_start + count * 4 + 4;
-    let mut best_start = guessed.min(db.len().saturating_sub(1));
-    let mut best_score = isize::MIN;
-
-    // Most saves place string data just after the len table, but some cloud saves
-    // are shifted by a few bytes. Search a small window around the estimate.
-    let from = guessed.saturating_sub(96);
-    let to = (guessed + 96).min(db.len().saturating_sub(1));
-    for candidate in from..=to {
-        let score = string_start_score(db, len_start, candidate);
-        if score > best_score {
-            best_score = score;
-            best_start = candidate;
-        }
-    }
-
-    if best_score > -10_000 {
-        return best_start;
-    }
-
-    let end_of_lens = len_start + count * 4;
-    if let Some(bb_pos) = find_pattern(db, &BB, end_of_lens.saturating_sub(96), end_of_lens + 512) {
-        return bb_pos + 4;
-    }
-    guessed
-}
-
-// find_cols can return a position INSIDE the len array (e.g. if find_type22_data
-// finds the wrong BB marker). Back up by multiples of 4 until strings look valid.
-fn validated_len_col(db: &[u8], raw_col: usize, count: usize) -> usize {
-    let data_fwd = string_data_start(db,raw_col, count);
-    if is_good_string_start(db, raw_col, data_fwd) { return raw_col; }
-    for k in 1..=512usize {
-        let candidate = match raw_col.checked_sub(k * 4) { Some(c) => c, None => break };
-        let data_try = string_data_start(db,candidate, count);
-        if is_good_string_start(db, candidate, data_try) { return candidate; }
-    }
-    raw_col
-}
-
-fn country_code_start_score(db: &[u8], len_start: usize, data_start: usize) -> isize {
-    let mut pos = data_start;
-    let mut total = 0usize;
-    let mut score = 0isize;
-
-    for i in 0..40 {
-        if len_start + i * 4 + 4 > db.len() { break; }
-        let len = read_u32(db, len_start + i * 4) as usize;
-        if len == 0 {
-            total += 1;
-            if total >= 24 { break; }
-            continue;
-        }
-        if len > 8 || pos + len > db.len() || db[pos + len - 1] != 0 {
-            return -10_000;
-        }
-        let iso = normalize_iso(&decode_pcm_text(&db[pos..pos + len]));
-        pos += len;
-        total += 1;
-        if iso.is_empty() {
-            score += 1;
-        } else if iso.len() == 3 && iso.chars().all(|c| c.is_ascii_lowercase()) {
-            score += 8;
-            if country_name(&iso) != "" {
-                score += 8;
-            }
-        } else {
-            score -= 10;
-        }
-        if total >= 24 { break; }
-    }
-
-    if total < 8 { -10_000 } else { score }
-}
-
-fn country_code_data_start(db: &[u8], len_start: usize, count: usize) -> usize {
-    let guessed = len_start + count * 4 + 4;
-    let mut best_start = guessed.min(db.len().saturating_sub(1));
-    let mut best_score = isize::MIN;
-
-    let from = guessed.saturating_sub(96);
-    let to = (guessed + 96).min(db.len().saturating_sub(1));
-    for candidate in from..=to {
-        let score = country_code_start_score(db, len_start, candidate);
-        if score > best_score {
-            best_score = score;
-            best_start = candidate;
-        }
-    }
-
-    if best_score > -10_000 {
-        return best_start;
-    }
-
-    guessed
-}
-
-fn score_iso_code_block(db: &[u8], len_col: usize, count: usize) -> isize {
-    let codes = read_strings(db, len_col, country_code_data_start(db, len_col, count), count);
-    let mut score = 0isize;
-    for code in codes.iter().take(24) {
-        let iso = normalize_iso(code);
-        if iso.len() == 3 && iso.chars().all(|c| c.is_ascii_lowercase()) {
-            score += 4;
-            if country_name(&iso) != "" {
-                score += 6;
-            }
-        } else if !iso.is_empty() {
-            score -= 6;
-        }
-    }
-    score
-}
-
-fn pick_country_code_col(db: &[u8], cols: &[usize], min_after: usize, fallback: usize, count: usize) -> usize {
-    let mut best_col = fallback;
-    let mut best_score = isize::MIN;
-
-    for &col in cols {
-        if col <= min_after { continue; }
-        let score = score_iso_code_block(db, col, count);
-        if score > best_score {
-            best_score = score;
-            best_col = col;
-        }
-    }
-
-    if best_score > isize::MIN {
-        best_col
+fn hex_color(s: &str) -> String {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() == 6 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("#{}", s.to_uppercase())
     } else {
-        fallback
+        String::new()
     }
 }
 
-fn country_id_base(raw_country_codes: &[String]) -> i32 {
-    let first = raw_country_codes
-        .first()
-        .map(|code| normalize_iso(code))
-        .unwrap_or_default();
-    let second = raw_country_codes
-        .get(1)
-        .map(|code| normalize_iso(code))
-        .unwrap_or_default();
+// ─── Countries ────────────────────────────────────────────────────────────────
 
-    // PCM saves usually keep an empty sentinel at index 0, so country id 2 maps to
-    // the second entry ("ita" in the stock DB). If that sentinel is missing, fall
-    // back to the older +2 layout.
-    if first.is_empty() && second.len() == 3 {
-        1
-    } else {
-        2
-    }
-}
-
-// ─── Text decoding ────────────────────────────────────────────────────────────
-fn decode_pcm_text(raw: &[u8]) -> String {
-    let raw: Vec<u8> = raw.iter().copied().take_while(|&b| b != 0).collect();
-    if raw.is_empty() { return String::new(); }
-
-    // Try UTF-8
-    if let Ok(s) = std::str::from_utf8(&raw) {
-        let s = s.trim();
-        if !s.is_empty() && !s.contains('\u{FFFD}') {
-            return sanitize(s);
-        }
-    }
-    // Try CP1252 via manual table
-    let s: String = raw.iter().map(|&b| cp1252(b)).collect();
-    sanitize(&s)
-}
-
-fn sanitize(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\r' | '\n' | '\t' => out.push(' '),
-            c if c.is_control() => {}
-            c => out.push(c),
-        }
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn cp1252(b: u8) -> char {
-    // CP1252 extension block (0x80–0x9F)
-    const EXT: [char; 32] = [
-        '€','\u{81}','‚','ƒ','„','…','†','‡','ˆ','‰','Š','‹','Œ','\u{8D}','Ž','\u{8F}',
-        '\u{90}','\'','\'','"','"','•','–','—','˜','™','š','›','œ','\u{9D}','ž','Ÿ',
-    ];
-    if b < 0x80 || b >= 0xA0 { b as char } else { EXT[(b - 0x80) as usize] }
-}
-
-fn looks_like_garbage(s: &str) -> bool {
-    if s.is_empty() { return true; }
-    if s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_digit()) { return true; }
-    let visible: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
-    if visible.is_empty() { return true; }
-    let weird = visible.iter().filter(|&&c| !(c.is_alphabetic() || ".'\\-#/&()".contains(c))).count();
-    weird as f32 / visible.len() as f32 > 0.35
-}
-
-fn name_quality(s: &str) -> usize {
-    let trimmed = s.trim();
-    if trimmed.is_empty() || looks_like_garbage(trimmed) {
-        return 0;
-    }
-    let words = trimmed.split_whitespace().count();
-    let letters = trimmed.chars().filter(|c| c.is_alphabetic()).count();
-    let separators = trimmed.chars().filter(|c| matches!(c, ' ' | '-' | '\'')).count();
-    words * 1000 + letters * 10 + separators
-}
-
-fn choose_name(first: &str, last: &str, full: &str, id: i32) -> String {
-    let f = first.trim();
-    let l = last.trim();
-    let full = full.trim();
-    let combined = format!("{} {}", f, l).trim().to_string();
-    // Only trust fullname if it actually shares a token with first or last name.
-    // If fullname comes from the wrong table it'll be someone else's name.
-    let full_correlated = !full.is_empty() && !looks_like_garbage(full) && (
-        (f.len() >= 2 && full.to_lowercase().contains(&f.to_lowercase())) ||
-        (l.len() >= 2 && full.to_lowercase().contains(&l.to_lowercase()))
-    );
-    let candidates: &[&str] = if full_correlated {
-        &[full, combined.as_str(), f, l]
-    } else {
-        &[combined.as_str(), f, l]
-    };
-    let best = candidates.iter()
-        .copied()
-        .max_by_key(|s| name_quality(s))
-        .unwrap_or("");
-    if best.is_empty() { format!("#{}", id) } else { best.to_string() }
-}
-
-// ─── Country / continent data ─────────────────────────────────────────────────
 fn normalize_iso(raw: &str) -> String {
-    let s: String = raw.chars().filter(|c| c.is_alphabetic()).take(3).collect::<String>().to_lowercase();
+    let s: String = raw.chars().filter(|c| c.is_ascii_alphabetic()).take(3).collect::<String>().to_lowercase();
     match s.as_str() {
-        "swd" => "swe".to_string(),
-        "rom" => "rou".to_string(),
-        "chi" => "chl".to_string(),
-        other => other.to_string(),
+        "swd" => "swe".into(),
+        "rom" => "rou".into(),
+        "sar" => "rsa".into(),
+        other => other.into(),
     }
 }
 
-fn country_name(iso: &str) -> &'static str {
+/// ISO3 (PCM flavour) → (display name, ISO 3166 alpha-2).
+fn country_info(iso: &str) -> (&'static str, &'static str) {
     match iso {
-        "ago"=>"Angola","alb"=>"Albania","and"=>"Andorra","arg"=>"Argentina",
-        "arm"=>"Armenia","aus"=>"Australia","aut"=>"Austria","aze"=>"Azerbaijan",
-        "bel"=>"Belgium","ben"=>"Benin","bfa"=>"Burkina Faso","bhr"=>"Bahrain",
-        "bih"=>"Bosnia and Herzegovina","blr"=>"Belarus","bol"=>"Bolivia",
-        "bra"=>"Brazil","bul"=>"Bulgaria","can"=>"Canada","chl"=>"Chile",
-        "cmr"=>"Cameroon","cod"=>"DR Congo","col"=>"Colombia","crc"=>"Costa Rica",
-        "cro"=>"Croatia","cub"=>"Cuba","civ"=>"Ivory Coast","cyp"=>"Cyprus",
-        "cze"=>"Czech Republic","den"=>"Denmark","dom"=>"Dominican Republic",
-        "dza"=>"Algeria","ecu"=>"Ecuador","egy"=>"Egypt","eri"=>"Eritrea",
-        "esp"=>"Spain","est"=>"Estonia","eth"=>"Ethiopia","fin"=>"Finland",
-        "fra"=>"France","gab"=>"Gabon","gbr"=>"Great Britain","geo"=>"Georgia",
-        "ger"=>"Germany","gha"=>"Ghana","gre"=>"Greece","hun"=>"Hungary",
-        "idn"=>"Indonesia","ind"=>"India","irl"=>"Ireland","irn"=>"Iran",
-        "isl"=>"Iceland","isr"=>"Israel","ita"=>"Italy","jam"=>"Jamaica",
-        "jpn"=>"Japan","kaz"=>"Kazakhstan","ken"=>"Kenya","kgz"=>"Kyrgyzstan",
-        "kor"=>"South Korea","kos"=>"Kosovo","lat"=>"Latvia","lie"=>"Liechtenstein",
-        "ltu"=>"Lithuania","lux"=>"Luxembourg","mar"=>"Morocco","mas"=>"Malaysia",
-        "mco"=>"Monaco","mex"=>"Mexico","mkd"=>"North Macedonia","mlt"=>"Malta",
-        "mne"=>"Montenegro","mol"=>"Moldova","ned"=>"Netherlands","nga"=>"Nigeria",
-        "nor"=>"Norway","nzl"=>"New Zealand","pak"=>"Pakistan","per"=>"Peru",
-        "pol"=>"Poland","por"=>"Portugal","qat"=>"Qatar","rou"=>"Romania",
-        "rsa"=>"South Africa","rus"=>"Russia","rwa"=>"Rwanda","sau"=>"Saudi Arabia",
-        "sen"=>"Senegal","ser"=>"Serbia","sgp"=>"Singapore","slo"=>"Slovenia",
-        "smr"=>"San Marino","svk"=>"Slovakia","swe"=>"Sweden","swi"=>"Switzerland",
-        "tha"=>"Thailand","tto"=>"Trinidad and Tobago","tun"=>"Tunisia",
-        "tur"=>"Turkey","twn"=>"Taiwan","uae"=>"United Arab Emirates",
-        "uga"=>"Uganda","ukr"=>"Ukraine","uru"=>"Uruguay","usa"=>"United States",
-        "uzb"=>"Uzbekistan","ven"=>"Venezuela","vnm"=>"Vietnam","zim"=>"Zimbabwe",
-        _ => "",
+        "ago" => ("Angola", "ao"), "alb" => ("Albania", "al"), "and" => ("Andorra", "ad"),
+        "arg" => ("Argentina", "ar"), "arm" => ("Armenia", "am"), "aus" => ("Australia", "au"),
+        "aut" => ("Austria", "at"), "aze" => ("Azerbaijan", "az"), "bel" => ("Belgium", "be"),
+        "ben" => ("Benin", "bj"), "ber" => ("Bermuda", "bm"), "bfa" => ("Burkina Faso", "bf"),
+        "bhr" => ("Bahrain", "bh"), "bhs" => ("Bahamas", "bs"), "bih" => ("Bosnia and Herzegovina", "ba"),
+        "blr" => ("Belarus", "by"), "blz" => ("Belize", "bz"), "bol" => ("Bolivia", "bo"),
+        "bra" => ("Brazil", "br"), "brn" => ("Brunei", "bn"), "bul" => ("Bulgaria", "bg"),
+        "can" => ("Canada", "ca"), "chi" => ("China", "cn"), "chn" => ("China", "cn"),
+        "chl" => ("Chile", "cl"), "civ" => ("Ivory Coast", "ci"), "cmr" => ("Cameroon", "cm"),
+        "cod" => ("DR Congo", "cd"), "col" => ("Colombia", "co"), "crc" => ("Costa Rica", "cr"),
+        "cro" => ("Croatia", "hr"), "cub" => ("Cuba", "cu"), "cuw" => ("Curaçao", "cw"),
+        "cyp" => ("Cyprus", "cy"), "cze" => ("Czechia", "cz"), "den" => ("Denmark", "dk"),
+        "dom" => ("Dominican Republic", "do"), "dza" => ("Algeria", "dz"), "ecu" => ("Ecuador", "ec"),
+        "egy" => ("Egypt", "eg"), "eri" => ("Eritrea", "er"), "esp" => ("Spain", "es"),
+        "est" => ("Estonia", "ee"), "eth" => ("Ethiopia", "et"), "fin" => ("Finland", "fi"),
+        "fra" => ("France", "fr"), "gab" => ("Gabon", "ga"), "gbr" => ("Great Britain", "gb"),
+        "geo" => ("Georgia", "ge"), "ger" => ("Germany", "de"), "gha" => ("Ghana", "gh"),
+        "grd" => ("Grenada", "gd"), "gre" => ("Greece", "gr"), "gtm" => ("Guatemala", "gt"),
+        "gum" => ("Guam", "gu"), "guy" => ("Guyana", "gy"), "hkg" => ("Hong Kong", "hk"),
+        "hnd" => ("Honduras", "hn"), "hun" => ("Hungary", "hu"), "idn" => ("Indonesia", "id"),
+        "ind" => ("India", "in"), "irl" => ("Ireland", "ie"), "irn" => ("Iran", "ir"),
+        "irq" => ("Iraq", "iq"), "isl" => ("Iceland", "is"), "isr" => ("Israel", "il"),
+        "ita" => ("Italy", "it"), "jam" => ("Jamaica", "jm"), "jpn" => ("Japan", "jp"),
+        "kaz" => ("Kazakhstan", "kz"), "ken" => ("Kenya", "ke"), "kgz" => ("Kyrgyzstan", "kg"),
+        "khm" => ("Cambodia", "kh"), "kor" => ("South Korea", "kr"), "kos" => ("Kosovo", "xk"),
+        "kuw" => ("Kuwait", "kw"), "lao" => ("Laos", "la"), "lat" => ("Latvia", "lv"),
+        "lie" => ("Liechtenstein", "li"), "lka" => ("Sri Lanka", "lk"), "lso" => ("Lesotho", "ls"),
+        "ltu" => ("Lithuania", "lt"), "lux" => ("Luxembourg", "lu"), "mar" => ("Morocco", "ma"),
+        "mas" => ("Malaysia", "my"), "mco" => ("Monaco", "mc"), "mex" => ("Mexico", "mx"),
+        "mkd" => ("North Macedonia", "mk"), "mli" => ("Mali", "ml"), "mlt" => ("Malta", "mt"),
+        "mne" => ("Montenegro", "me"), "mng" => ("Mongolia", "mn"), "mol" => ("Moldova", "md"),
+        "mus" => ("Mauritius", "mu"), "nam" => ("Namibia", "na"), "ned" => ("Netherlands", "nl"),
+        "nga" => ("Nigeria", "ng"), "nor" => ("Norway", "no"), "nzl" => ("New Zealand", "nz"),
+        "oma" => ("Oman", "om"), "pak" => ("Pakistan", "pk"), "pan" => ("Panama", "pa"),
+        "per" => ("Peru", "pe"), "phl" => ("Philippines", "ph"), "pol" => ("Poland", "pl"),
+        "por" => ("Portugal", "pt"), "pri" => ("Puerto Rico", "pr"), "pry" => ("Paraguay", "py"),
+        "pse" => ("Palestine", "ps"), "qat" => ("Qatar", "qa"), "rou" => ("Romania", "ro"),
+        "rsa" => ("South Africa", "za"), "rus" => ("Russia", "ru"), "rwa" => ("Rwanda", "rw"),
+        "sau" => ("Saudi Arabia", "sa"), "sen" => ("Senegal", "sn"), "ser" => ("Serbia", "rs"),
+        "sgp" => ("Singapore", "sg"), "slo" => ("Slovenia", "si"), "smr" => ("San Marino", "sm"),
+        "svk" => ("Slovakia", "sk"), "swe" => ("Sweden", "se"), "swi" => ("Switzerland", "ch"),
+        "syr" => ("Syria", "sy"), "tha" => ("Thailand", "th"), "tls" => ("Timor-Leste", "tl"),
+        "tto" => ("Trinidad and Tobago", "tt"), "tun" => ("Tunisia", "tn"), "tur" => ("Türkiye", "tr"),
+        "twn" => ("Taiwan", "tw"), "uae" => ("United Arab Emirates", "ae"), "uga" => ("Uganda", "ug"),
+        "ukr" => ("Ukraine", "ua"), "uru" => ("Uruguay", "uy"), "usa" => ("United States", "us"),
+        "uzb" => ("Uzbekistan", "uz"), "ven" => ("Venezuela", "ve"), "vnm" => ("Vietnam", "vn"),
+        "zim" => ("Zimbabwe", "zw"),
+        _ => ("", ""),
     }
 }
 
-fn continent(iso: &str) -> &'static str {
-    match iso {
-        "ago"|"ben"|"bfa"|"cmr"|"cod"|"civ"|"dza"|"egy"|"eri"|"eth"|"gab"|"gha"|
-        "ken"|"lba"|"lso"|"mli"|"mar"|"moz"|"nam"|"nga"|"nig"|"rsa"|"rwa"|
-        "sen"|"tun"|"uga"|"zim" => "Africa",
-        "arm"|"aze"|"bhr"|"brn"|"hkg"|"idn"|"ind"|"irn"|"irq"|"isr"|"jpn"|
-        "kaz"|"khm"|"kgz"|"kor"|"kuw"|"lao"|"lka"|"mas"|"mng"|"oma"|"pak"|
-        "phl"|"qat"|"sau"|"sgp"|"syr"|"tha"|"tls"|"twn"|"uae"|"uzb"|"vnm" => "Asia",
-        "alb"|"and"|"aut"|"bel"|"bih"|"blr"|"bul"|"cro"|"cyp"|"cze"|"den"|"esp"|
-        "est"|"fin"|"fra"|"gbr"|"geo"|"ger"|"gre"|"hun"|"irl"|"isl"|"ita"|"kos"|
-        "lat"|"lie"|"ltu"|"lux"|"mco"|"mkd"|"mlt"|"mne"|"mol"|"ned"|"nor"|"pol"|
-        "por"|"rou"|"rus"|"ser"|"slo"|"smr"|"svk"|"swe"|"swi"|"tur"|"ukr" => "Europe",
-        "can"|"crc"|"cub"|"dom"|"gtm"|"hnd"|"jam"|"mex"|"nic"|"pan"|"pri"|"usa" => "North America",
-        "aus"|"nzl" => "Oceania",
-        "arg"|"bol"|"bra"|"chl"|"col"|"ecu"|"guy"|"per"|"pry"|"sur"|"tto"|"uru"|"ven" => "South America",
+fn continent_name(constant: &str) -> &'static str {
+    match constant {
+        "Europa" | "Europe" => "Europe",
+        "NorthAmerica" => "North America",
+        "SouthAmerica" => "South America",
+        "Asia" => "Asia",
+        "Oceania" => "Oceania",
+        "Africa" => "Africa",
         _ => "Unknown",
     }
 }
 
-fn flag_emoji(iso: &str) -> String {
-    if iso.len() < 2 { return String::new(); }
-    // Use 2-letter ISO 3166-1 alpha-2 equivalents for common cycling nations
-    let alpha2 = iso_to_alpha2(iso);
-    if alpha2.len() < 2 { return String::new(); }
-    let bytes: Vec<char> = alpha2.to_uppercase().chars().collect();
-    if bytes.len() < 2 { return String::new(); }
-    let a = char::from_u32(0x1F1E6 + bytes[0] as u32 - 'A' as u32).unwrap_or(' ');
-    let b = char::from_u32(0x1F1E6 + bytes[1] as u32 - 'A' as u32).unwrap_or(' ');
-    format!("{}{}", a, b)
+#[derive(Clone, Default)]
+struct Country {
+    iso: String,
+    name: String,
+    flag: String,
+    continent: String,
 }
 
-fn iso_to_alpha2(iso3: &str) -> &'static str {
-    match iso3 {
-        "alb"=>"AL","and"=>"AD","arg"=>"AR","arm"=>"AM","aus"=>"AU","aut"=>"AT",
-        "aze"=>"AZ","bel"=>"BE","blr"=>"BY","bol"=>"BO","bra"=>"BR","bul"=>"BG",
-        "can"=>"CA","chl"=>"CL","cmr"=>"CM","col"=>"CO","crc"=>"CR","cro"=>"HR",
-        "cub"=>"CU","cyp"=>"CY","cze"=>"CZ","den"=>"DK","dom"=>"DO","dza"=>"DZ",
-        "ecu"=>"EC","egy"=>"EG","eri"=>"ER","esp"=>"ES","est"=>"EE","eth"=>"ET",
-        "fin"=>"FI","fra"=>"FR","gab"=>"GA","gbr"=>"GB","geo"=>"GE","ger"=>"DE",
-        "gha"=>"GH","gre"=>"GR","hun"=>"HU","idn"=>"ID","ind"=>"IN","irl"=>"IE",
-        "irn"=>"IR","isl"=>"IS","isr"=>"IL","ita"=>"IT","jam"=>"JM","jpn"=>"JP",
-        "kaz"=>"KZ","ken"=>"KE","kgz"=>"KG","kor"=>"KR","kos"=>"XK","lat"=>"LV",
-        "lie"=>"LI","ltu"=>"LT","lux"=>"LU","mar"=>"MA","mas"=>"MY","mco"=>"MC",
-        "mex"=>"MX","mkd"=>"MK","mlt"=>"MT","mne"=>"ME","mol"=>"MD","ned"=>"NL",
-        "nga"=>"NG","nor"=>"NO","nzl"=>"NZ","pak"=>"PK","per"=>"PE","pol"=>"PL",
-        "por"=>"PT","qat"=>"QA","rou"=>"RO","rsa"=>"ZA","rus"=>"RU","rwa"=>"RW",
-        "sau"=>"SA","sen"=>"SN","ser"=>"RS","sgp"=>"SG","slo"=>"SI","smr"=>"SM",
-        "svk"=>"SK","swe"=>"SE","swi"=>"CH","tha"=>"TH","tto"=>"TT","tun"=>"TN",
-        "tur"=>"TR","twn"=>"TW","uae"=>"AE","uga"=>"UG","ukr"=>"UA","uru"=>"UY",
-        "usa"=>"US","uzb"=>"UZ","ven"=>"VE","vnm"=>"VN","zim"=>"ZW","civ"=>"CI",
-        "ben"=>"BJ","bfa"=>"BF","cod"=>"CD",_ => "",
-    }
+fn load_countries(db: &Cdb) -> HashMap<i32, Country> {
+    let continents: HashMap<i32, &'static str> = {
+        let t = Rows::new(db, "STA_continent");
+        t.int("IDcontinent").into_iter().zip(t.text("CONSTANT")).map(|(id, c)| (id, continent_name(&c))).collect()
+    };
+    let t = Rows::new(db, "STA_country");
+    let (ids, codes, conts) = (t.int("IDcountry"), t.text("CONSTANT"), t.int("fkIDcontinent"));
+    (0..t.len)
+        .map(|i| {
+            let iso = normalize_iso(&codes[i]);
+            let (name, flag) = country_info(&iso);
+            let country = Country {
+                name: if name.is_empty() { iso.to_uppercase() } else { name.to_string() },
+                flag: flag.to_string(),
+                continent: continents.get(&conts[i]).copied().unwrap_or("Unknown").to_string(),
+                iso,
+            };
+            (ids[i], country)
+        })
+        .collect()
 }
 
-// ─── Derived metrics ──────────────────────────────────────────────────────────
-const STAT_KEYS: &[(&str, &str, bool)] = &[
-    // (field_name, label, is_potential)
-    ("flat",         "Flat",          false),
-    ("mountain",     "Mountain",      false),
-    ("med_mtn",      "Med. Mountain", false),
-    ("downhill",     "Downhill",      false),
-    ("cobble",       "Cobbles",       false),
-    ("timetrial",    "Time Trial",    false),
-    ("prologue",     "Prologue",      false),
-    ("sprint",       "Sprint",        false),
-    ("acceleration", "Acceleration",  false),
-    ("endurance",    "Endurance",     false),
-    ("resistance",   "Resistance",    false),
-    ("recuperation", "Recuperation",  false),
-    ("hill",         "Hill",          false),
-    ("baroudeur",    "Baroudeur",     false),
+// ─── Rider metrics ────────────────────────────────────────────────────────────
+
+const STATS: [(&str, &str); 14] = [
+    ("flat", "Flat"), ("mountain", "Mountain"), ("med_mtn", "Med. Mountain"), ("downhill", "Downhill"),
+    ("cobble", "Cobbles"), ("timetrial", "Time Trial"), ("prologue", "Prologue"), ("sprint", "Sprint"),
+    ("acceleration", "Acceleration"), ("endurance", "Endurance"), ("resistance", "Resistance"),
+    ("recuperation", "Recuperation"), ("hill", "Hill"), ("baroudeur", "Baroudeur"),
 ];
 
-fn get_stat(c: &Cyclist, key: &str) -> f32 {
-    match key {
-        "flat"=>c.flat as f32,"mountain"=>c.mountain as f32,"med_mtn"=>c.med_mtn as f32,
-        "downhill"=>c.downhill as f32,"cobble"=>c.cobble as f32,"timetrial"=>c.timetrial as f32,
-        "prologue"=>c.prologue as f32,"sprint"=>c.sprint as f32,"acceleration"=>c.acceleration as f32,
-        "endurance"=>c.endurance as f32,"resistance"=>c.resistance as f32,
-        "recuperation"=>c.recuperation as f32,"hill"=>c.hill as f32,"baroudeur"=>c.baroudeur as f32,
-        _ => 0.0,
-    }
-}
-fn get_stat_p(c: &Cyclist, key: &str) -> f32 {
-    match key {
-        "flat"=>c.flat_p as f32,"mountain"=>c.mountain_p as f32,"med_mtn"=>c.med_mtn_p as f32,
-        "downhill"=>c.downhill_p as f32,"cobble"=>c.cobble_p as f32,"timetrial"=>c.timetrial_p as f32,
-        "prologue"=>c.prologue_p as f32,"sprint"=>c.sprint_p as f32,
-        "acceleration"=>c.acceleration_p as f32,"endurance"=>c.endurance_p as f32,
-        "resistance"=>c.resistance_p as f32,"recuperation"=>c.recuperation_p as f32,
-        "hill"=>c.hill_p as f32,"baroudeur"=>c.baroudeur_p as f32,
-        _ => 0.0,
-    }
+fn stat_pairs(c: &Cyclist) -> [(i32, i32); 14] {
+    [
+        (c.flat, c.flat_p), (c.mountain, c.mountain_p), (c.med_mtn, c.med_mtn_p), (c.downhill, c.downhill_p),
+        (c.cobble, c.cobble_p), (c.timetrial, c.timetrial_p), (c.prologue, c.prologue_p), (c.sprint, c.sprint_p),
+        (c.acceleration, c.acceleration_p), (c.endurance, c.endurance_p), (c.resistance, c.resistance_p),
+        (c.recuperation, c.recuperation_p), (c.hill, c.hill_p), (c.baroudeur, c.baroudeur_p),
+    ]
 }
 
-fn stat_avg(c: &Cyclist) -> f32 {
-    STAT_KEYS.iter().map(|(k,_,_)| get_stat(c,k)).sum::<f32>() / STAT_KEYS.len() as f32
-}
-fn stat_ceil(c: &Cyclist) -> f32 {
-    STAT_KEYS.iter().map(|(k,_,_)| get_stat_p(c,k)).sum::<f32>() / STAT_KEYS.len() as f32
-}
-fn peak_gap(c: &Cyclist) -> i32 {
-    STAT_KEYS.iter().map(|(k,_,_)| (get_stat_p(c,k) - get_stat(c,k)) as i32).max().unwrap_or(0)
-}
-fn top_skills(c: &Cyclist) -> Vec<TopSkill> {
-    let mut ranked: Vec<TopSkill> = STAT_KEYS.iter().map(|(k,l,_)| TopSkill {
-        key: k.to_string(), label: l.to_string(), value: get_stat(c,k) as i32,
-    }).collect();
-    ranked.sort_by(|a,b| b.value.cmp(&a.value));
+fn derive_metrics(c: &mut Cyclist) {
+    let pairs = stat_pairs(c);
+    let n = pairs.len() as f32;
+    let avg = pairs.iter().map(|p| p.0 as f32).sum::<f32>() / n;
+    let ceil = pairs.iter().map(|p| p.1.max(p.0) as f32).sum::<f32>() / n;
+    c.skill_average = round1(avg);
+    c.skill_ceiling = round1(ceil);
+    c.growth = round1((ceil - avg).max(0.0));
+    c.peak_gap = pairs.iter().map(|p| (p.1 - p.0).max(0)).max().unwrap_or(0);
+    let mut ranked: Vec<TopSkill> = STATS
+        .iter()
+        .zip(pairs.iter())
+        .map(|((k, l), p)| TopSkill { key: k.to_string(), label: l.to_string(), value: p.0 })
+        .collect();
+    ranked.sort_by(|a, b| b.value.cmp(&a.value));
     ranked.truncate(3);
-    ranked
+    c.specialty_rating = ranked.iter().map(|s| s.value).sum();
+    c.top_skills = ranked;
+    c.scout_grade = scout_grade(c).to_string();
 }
 
 fn scout_grade(c: &Cyclist) -> &'static str {
-    let age    = c.age;
-    let stars  = c.potential;
-    let upside = c.growth;
-    let ca     = c.current_ability;
-    // Youth tiers (genuine development potential)
+    let (age, stars, upside, ca) = (c.age, c.potential, c.growth, c.current_ability);
     if age > 0 && age <= 20 && stars >= 5.5 && upside >= 6.0 { return "Wonderkid"; }
     if age > 0 && age <= 22 && stars >= 5.0 && upside >= 4.5 { return "Elite Prospect"; }
-    if age > 0 && age <= 23 && upside >= 5.0 && ca < 72.0    { return "Late Bloomer"; }
-    if age > 0 && age <= 23 && ca >= 72.0                     { return "Ready Now"; }
-    // Adult tiers — guard against misleading paper potential for older riders
-    if age >= 30 && upside >= 3.0  { return "Past Peak"; } // ceiling exists but age makes it unreachable
-    if age >= 27 && ca >= 78.0     { return "Veteran"; }
+    if age > 0 && age <= 23 && upside >= 5.0 && ca < 72.0 { return "Late Bloomer"; }
+    if age > 0 && age <= 23 && ca >= 72.0 { return "Ready Now"; }
+    if age >= 30 && upside >= 3.0 { return "Past Peak"; }
+    if age >= 27 && ca >= 78.0 { return "Veteran"; }
     "Monitor"
 }
 
-fn is_free_agent(team_id: i32) -> bool {
-    team_id == FREE_AGENT_TEAM_ID || team_id <= 0
-}
-
-fn is_placeholder(c: &Cyclist) -> bool {
-    let name_placeholder = c.name.starts_with('#') && c.name[1..].chars().all(|ch| ch.is_ascii_digit());
-    let team_placeholder = c.team.starts_with("Team #") || (c.team_short.starts_with('#') && c.team_short[1..].chars().all(|ch| ch.is_ascii_digit()));
-    let broken = looks_like_garbage(&c.name) && (c.team.is_empty() || team_placeholder) && c.nationality == "Unknown";
-    let impossible = c.age == 0 && c.current_ability <= 0.0
-        && (name_placeholder || c.team_id > 10000 || c.nationality == "Unknown" || team_placeholder);
-    (name_placeholder && team_placeholder && c.nationality == "Unknown") || broken || impossible
-}
-
-// ─── Rider type ───────────────────────────────────────────────────────────────
 fn rider_type(id: i32) -> &'static str {
     match id {
-        1=>"All-Rounder",2=>"Climber",3=>"Time Trialist",4=>"Sprinter",
-        5=>"Ardennes",6=>"Classics",7=>"Rouleur",_=>"?",
+        1 => "Stage Racer",
+        2 => "Climber",
+        3 => "Time Trialist",
+        4 => "Sprinter",
+        5 => "Puncheur",
+        6 => "Cobbles",
+        7 => "Rouleur",
+        _ => "Unknown",
     }
 }
 
-// ─── Main extractor ───────────────────────────────────────────────────────────
+fn ledger_kind(code: i32) -> (&'static str, &'static str) {
+    match code {
+        3011 => ("balance", "Balance carried forward"),
+        5484 => ("sponsor", "Sponsor budget"),
+        2918 => ("wages", "Rider wages"),
+        2919 => ("staff", "Staff wages"),
+        3072 => ("equipment", "Equipment"),
+        330 => ("training", "Training camp"),
+        4124 => ("staff", "Staff contract"),
+        4141 => ("prize", "Prize money"),
+        _ => ("other", "Other"),
+    }
+}
 
-pub fn extract(path: &str) -> Result<SaveData, String> {
-    let raw = std::fs::read(path).map_err(|e| format!("Cannot read file: {e}"))?;
-    if raw.len() < 0x0C { return Err("File too short".into()); }
-    let mut decompressed = Vec::new();
-    ZlibDecoder::new(&raw[0x0C..])
-        .read_to_end(&mut decompressed)
-        .map_err(|e| format!("Decompression failed: {e}"))?;
-    let db = &decompressed;
+// ─── Extraction ───────────────────────────────────────────────────────────────
 
-    let save_date_col = find_col(db, 0, db.len(), b"gene_i_date_resolve")
-        .or_else(|| find_col(db, OFF_SAVE_META_POS, OFF_SAVE_META_END, b"gene_i_date"))
-        .or_else(|| find_col(db, 0, db.len(), b"gene_i_date"));
-    let game_date = save_date_col
-        .and_then(|col| (0..8).map(|i| parse_date_int(read_i32(db, col + i * 4))).find(|d| d.is_some()))
-        .flatten()
-        .unwrap_or(Date { year: 2033, month: 8, day: 5 });
+struct Contract {
+    wage: i32,
+    start: i32,
+    end: i32,
+}
 
-    let cyclist_id_col = pick_col(&find_cols(db, 0, db.len(), b"IDcyclist"), 100_000, OFF_ID);
-    let team_ref_col = pick_col(&find_cols(db, 0, db.len(), b"fkIDteam"), cyclist_id_col, OFF_TEAM);
-    let region_ref_col = pick_col(&find_cols(db, 0, db.len(), b"fkIDregion"), cyclist_id_col, OFF_REGION);
-    let birthdate_col = pick_col(&find_cols(db, 0, db.len(), b"gene_i_birthdate"), cyclist_id_col, OFF_BIRTHDATE);
-    let rider_type_col = pick_col(&find_cols(db, 0, db.len(), b"fkIDtype_rider"), cyclist_id_col, OFF_TYPE_RIDER);
-    let size_col = pick_col(&find_cols(db, 0, db.len(), b"gene_i_size"), cyclist_id_col, OFF_SIZE);
-    let weight_col = pick_col(&find_cols(db, 0, db.len(), b"gene_i_weight"), cyclist_id_col, OFF_WEIGHT);
-    let potential_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potentiel"), cyclist_id_col, OFF_POTENTIAL);
-    let ability_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_current_ability"), cyclist_id_col, OFF_CURRENT_ABILITY);
-
-    let lastname_len_col = validated_len_col(db, pick_col(&find_cols(db, 0, db.len(), b"gene_sz_lastname"), cyclist_id_col, OFF_LASTNAME_LEN), NUM_CYCLISTS);
-    let firstname_len_col = validated_len_col(db, pick_col(&find_cols(db, 0, db.len(), b"gene_sz_firstname"), cyclist_id_col, OFF_FIRSTNAME_LEN), NUM_CYCLISTS);
-    let fullname_len_col = validated_len_col(db, pick_col(&find_cols(db, 0, db.len(), b"gene_sz_firstlastname"), cyclist_id_col, OFF_FULLNAME_LEN), NUM_CYCLISTS);
-    let lastname_data_col = string_data_start(db,lastname_len_col, NUM_CYCLISTS);
-    let firstname_data_col = string_data_start(db,firstname_len_col, NUM_CYCLISTS);
-    let fullname_data_col = string_data_start(db,fullname_len_col, NUM_CYCLISTS);
-
-    let s_flat_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_plain"), cyclist_id_col, OFF_FLAT);
-    let s_flat_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_plain"), cyclist_id_col, OFF_FLAT_P);
-    let s_mtn_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_mountain"), cyclist_id_col, OFF_MTN);
-    let s_mtn_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_mountain"), cyclist_id_col, OFF_MTN_P);
-    let s_med_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_medium_mountain"), cyclist_id_col, OFF_MED_MTN);
-    let s_med_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_medium_mountain"), cyclist_id_col, OFF_MED_MTN_P);
-    let s_dh_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_downhilling"), cyclist_id_col, OFF_DOWNHILL);
-    let s_dh_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_downhilling"), cyclist_id_col, OFF_DOWNHILL_P);
-    let s_cob_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_cobble"), cyclist_id_col, OFF_COBBLE);
-    let s_cob_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_cobble"), cyclist_id_col, OFF_COBBLE_P);
-    let s_tt_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_timetrial"), cyclist_id_col, OFF_TT);
-    let s_tt_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_timetrial"), cyclist_id_col, OFF_TT_P);
-    let s_pro_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_prologue"), cyclist_id_col, OFF_PROLOGUE);
-    let s_pro_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_prologue"), cyclist_id_col, OFF_PROLOGUE_P);
-    let s_spr_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_sprint"), cyclist_id_col, OFF_SPRINT);
-    let s_spr_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_sprint"), cyclist_id_col, OFF_SPRINT_P);
-    let s_acc_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_acceleration"), cyclist_id_col, OFF_ACCEL);
-    let s_acc_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_acceleration"), cyclist_id_col, OFF_ACCEL_P);
-    let s_end_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_endurance"), cyclist_id_col, OFF_ENDURANCE);
-    let s_end_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_endurance"), cyclist_id_col, OFF_ENDURANCE_P);
-    let s_res_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_resistance"), cyclist_id_col, OFF_RESISTANCE);
-    let s_res_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_resistance"), cyclist_id_col, OFF_RESISTANCE_P);
-    let s_rec_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_recuperation"), cyclist_id_col, OFF_RECUP);
-    let s_rec_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_recuperation"), cyclist_id_col, OFF_RECUP_P);
-    let s_hil_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_hill"), cyclist_id_col, OFF_HILL);
-    let s_hil_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_hill"), cyclist_id_col, OFF_HILL_P);
-    let s_bar_col = pick_col(&find_cols(db, 0, db.len(), b"charac_i_baroudeur"), cyclist_id_col, OFF_BAROUDEUR);
-    let s_bar_p_col = pick_col(&find_cols(db, 0, db.len(), b"limit_i_baroudeur"), cyclist_id_col, OFF_BAROUDEUR_P);
-
-    let team_id_col = pick_col(&find_cols(db, 0, db.len(), b"IDteam"), 8_000_000, 0);
-    let team_short_len_col = validated_len_col(db, pick_col(&find_cols(db, 0, db.len(), b"gene_sz_shortname"), team_id_col, OFF_TEAM_SHORT_LEN), TEAM_COUNT);
-    let team_name_len_col = validated_len_col(db, pick_col(&find_cols(db, 0, db.len(), b"gene_sz_name"), team_id_col, OFF_TEAM_NAME_LEN), TEAM_COUNT);
-    let team_country_col = pick_col(&find_cols(db, 0, db.len(), b"fkIDcountry"), team_id_col, 0);
-    let team_short_data_col = string_data_start(db,team_short_len_col, TEAM_COUNT);
-    let team_name_data_col = string_data_start(db,team_name_len_col, TEAM_COUNT);
-
-    let country_id_col = pick_col(&find_cols(db, 0, db.len(), b"IDcountry"), team_id_col, 0);
-    let country_code_len_col = pick_country_code_col(
-        db,
-        &find_cols(db, 0, db.len(), b"CONSTANT"),
-        country_id_col,
-        OFF_COUNTRY_CODES - COUNTRY_COUNT * 4 - 4,
-        COUNTRY_COUNT,
-    );
-    let country_code_data_col = country_code_data_start(db, country_code_len_col, COUNTRY_COUNT);
-    let raw_country_codes = read_strings(db, country_code_len_col, country_code_data_col, COUNTRY_COUNT);
-    let country_base = country_id_base(&raw_country_codes);
-    let country_map = raw_country_codes.iter().enumerate()
-        .map(|(i, code)| ((i as i32) + country_base, normalize_iso(code)))
-        .collect::<HashMap<i32, String>>();
-
-    let region_id_col = pick_col(&find_cols(db, 0, db.len(), b"IDregion"), country_id_col, 0);
-    let region_country_col = pick_col(&find_cols(db, 0, db.len(), b"fkIDcountry"), region_id_col, 0);
-    let region_ids = if region_id_col > 0 { read_ints(db, region_id_col, REGION_COUNT) } else { vec![] };
-    let region_countries = if region_country_col > 0 { read_ints(db, region_country_col, REGION_COUNT) } else { vec![] };
-    let region_to_country = region_ids.iter().zip(region_countries.iter())
-        .filter(|(&r, &c)| r > 0 && c > 0)
-        .map(|(&r, &c)| (r, c))
-        .collect::<HashMap<i32, i32>>();
-
-    let team_ids = if team_id_col > 0 { read_uints(db, team_id_col, TEAM_COUNT) } else { vec![0; TEAM_COUNT] };
-    let team_countries = if team_country_col > 0 { read_ints(db, team_country_col, TEAM_COUNT) } else { vec![0; TEAM_COUNT] };
-    let team_names = read_strings(db, team_name_len_col, team_name_data_col, TEAM_COUNT);
-    let team_shorts = read_strings(db, team_short_len_col, team_short_data_col, TEAM_COUNT);
-
-    // Try several known PCM color field names; use first that resolves to a position past team_id_col
-    let find_team_col = |names: &[&[u8]]| -> usize {
-        for &n in names {
-            let cols = find_cols(db, 0, db.len(), n);
-            let c = pick_col(&cols, team_id_col, 0);
-            if c > 0 { return c; }
-        }
-        0
-    };
-    let team_c1_col = find_team_col(&[b"gene_i_color1", b"gene_i_couleur1", b"color_i_1", b"gene_i_colorkit1"]);
-    let team_c2_col = find_team_col(&[b"gene_i_color2", b"gene_i_couleur2", b"color_i_2", b"gene_i_colorkit2"]);
-    let team_c1 = if team_c1_col > 0 { read_ints(db, team_c1_col, TEAM_COUNT) } else { vec![0; TEAM_COUNT] };
-    let team_c2 = if team_c2_col > 0 { read_ints(db, team_c2_col, TEAM_COUNT) } else { vec![0; TEAM_COUNT] };
-    eprintln!("[colors] c1_col={team_c1_col} c2_col={team_c2_col} first5={:?}", team_c1.iter().take(5).collect::<Vec<_>>());
-
-    let bgr_to_hex = |v: i32| -> String {
-        if v <= 0 { return String::new(); }
-        let r = (v & 0xFF) as u8;
-        let g = ((v >> 8) & 0xFF) as u8;
-        let b = ((v >> 16) & 0xFF) as u8;
-        format!("#{:02X}{:02X}{:02X}", r, g, b)
-    };
-
-    let mut teams_map = HashMap::new();
-    for i in 0..TEAM_COUNT {
-        let tid = team_ids[i] as i32;
-        if tid <= 0 || tid >= 10000 || team_names[i].is_empty() { continue; }
-        let iso = country_map.get(&team_countries[i]).cloned().unwrap_or_default();
-        let c1 = bgr_to_hex(team_c1[i]);
-        let c2 = bgr_to_hex(team_c2[i]);
-        teams_map.insert(tid, (team_names[i].clone(), team_shorts[i].clone(), iso, c1, c2));
+pub fn extract(db: &Cdb, path: &str) -> Result<SaveData, String> {
+    if db.table("DYN_cyclist").is_none() || db.table("DYN_team").is_none() {
+        return Err("This file has no rider or team tables — is it a career save?".into());
     }
 
-    let ids = read_ints(db, cyclist_id_col, NUM_CYCLISTS);
-    let team_refs = read_ints(db, team_ref_col, NUM_CYCLISTS);
-    let regions = read_ints(db, region_ref_col, NUM_CYCLISTS);
-    let birthdates = read_ints(db, birthdate_col, NUM_CYCLISTS);
-    let type_ids = read_ints(db, rider_type_col, NUM_CYCLISTS);
-    let sizes = read_ints(db, size_col, NUM_CYCLISTS);
-    let weights = read_ints(db, weight_col, NUM_CYCLISTS);
-    let potentials = read_floats(db, potential_col, NUM_CYCLISTS);
-    let abilities = read_floats(db, ability_col, NUM_CYCLISTS);
+    // Game date & user
+    let cfg = Rows::new(db, "GAM_config");
+    let date_int = cfg.int("gene_i_date").first().copied().unwrap_or(0);
+    let now = parse_date(date_int).unwrap_or(Date { year: 2026, month: 1, day: 1 });
+    let users = Rows::new(db, "GAM_user");
+    let (active, user_teams, user_names) = (users.int("game_i_active"), users.int("fkIDteam_duplicate"), users.text("game_sz_display_name"));
+    let user_idx = (0..users.len).find(|&i| active[i] == 1 && user_teams[i] > 0);
+    let user_team_id = user_idx.map(|i| user_teams[i]).unwrap_or(0);
 
-    let s_flat = read_ints(db, s_flat_col, NUM_CYCLISTS); let s_flat_p = read_ints(db, s_flat_p_col, NUM_CYCLISTS);
-    let s_mtn = read_ints(db, s_mtn_col, NUM_CYCLISTS); let s_mtn_p = read_ints(db, s_mtn_p_col, NUM_CYCLISTS);
-    let s_med = read_ints(db, s_med_col, NUM_CYCLISTS); let s_med_p = read_ints(db, s_med_p_col, NUM_CYCLISTS);
-    let s_dh = read_ints(db, s_dh_col, NUM_CYCLISTS); let s_dh_p = read_ints(db, s_dh_p_col, NUM_CYCLISTS);
-    let s_cob = read_ints(db, s_cob_col, NUM_CYCLISTS); let s_cob_p = read_ints(db, s_cob_p_col, NUM_CYCLISTS);
-    let s_tt = read_ints(db, s_tt_col, NUM_CYCLISTS); let s_tt_p = read_ints(db, s_tt_p_col, NUM_CYCLISTS);
-    let s_pro = read_ints(db, s_pro_col, NUM_CYCLISTS); let s_pro_p = read_ints(db, s_pro_p_col, NUM_CYCLISTS);
-    let s_spr = read_ints(db, s_spr_col, NUM_CYCLISTS); let s_spr_p = read_ints(db, s_spr_p_col, NUM_CYCLISTS);
-    let s_acc = read_ints(db, s_acc_col, NUM_CYCLISTS); let s_acc_p = read_ints(db, s_acc_p_col, NUM_CYCLISTS);
-    let s_end = read_ints(db, s_end_col, NUM_CYCLISTS); let s_end_p = read_ints(db, s_end_p_col, NUM_CYCLISTS);
-    let s_res = read_ints(db, s_res_col, NUM_CYCLISTS); let s_res_p = read_ints(db, s_res_p_col, NUM_CYCLISTS);
-    let s_rec = read_ints(db, s_rec_col, NUM_CYCLISTS); let s_rec_p = read_ints(db, s_rec_p_col, NUM_CYCLISTS);
-    let s_hil = read_ints(db, s_hil_col, NUM_CYCLISTS); let s_hil_p = read_ints(db, s_hil_p_col, NUM_CYCLISTS);
-    let s_bar = read_ints(db, s_bar_col, NUM_CYCLISTS); let s_bar_p = read_ints(db, s_bar_p_col, NUM_CYCLISTS);
+    let countries = load_countries(db);
+    let region_country: HashMap<i32, i32> = {
+        let t = Rows::new(db, "STA_region");
+        t.int("IDregion").into_iter().zip(t.int("fkIDcountry")).collect()
+    };
+    let divisions: HashMap<i32, (String, i32)> = {
+        let t = Rows::new(db, "STA_division");
+        t.int("IDdivision")
+            .into_iter()
+            .zip(t.text("CONSTANT"))
+            .map(|(id, c)| {
+                // "[1] World Tour" → ("World Tour", 1)
+                let tier = c.strip_prefix('[').and_then(|r| r.split(']').next()).and_then(|n| n.trim().parse().ok()).unwrap_or(0);
+                let name = c.split(']').last().unwrap_or(&c).trim().to_string();
+                (id, (name, tier))
+            })
+            .collect()
+    };
 
-    let lastnames  = read_strings(db, lastname_len_col, lastname_data_col, NUM_CYCLISTS);
-    let firstnames = read_strings(db, firstname_len_col, firstname_data_col, NUM_CYCLISTS);
-    let fullnames  = read_strings(db, fullname_len_col, fullname_data_col, NUM_CYCLISTS);
+    // Contracts
+    let contracts: HashMap<i32, Contract> = {
+        let t = Rows::new(db, "DYN_contract_cyclist");
+        let (ids, wages, starts, ends) = (t.int("IDcontract_cyclist"), t.int("finan_i_period_wage"), t.int("iYearBegin"), t.int("iYearEnd"));
+        (0..t.len).map(|i| (ids[i], Contract { wage: wages[i], start: starts[i], end: ends[i] })).collect()
+    };
 
-    let clamp = |v: i32| v.max(0).min(100);
-    let mut cyclists: Vec<Cyclist> = Vec::new();
-    let mut cyclist_rows: Vec<Option<Cyclist>> = vec![None; NUM_CYCLISTS];
-
-    for i in 0..NUM_CYCLISTS {
-        let id = ids[i];
-        if id <= 0 || id > 200_000 { continue; }
-
-        let team_id = team_refs[i];
-        let (team_name, team_short, team_iso) = if let Some(t) = teams_map.get(&team_id) {
-            (t.0.clone(), t.1.clone(), t.2.clone())
-        } else if is_free_agent(team_id) {
-            ("Free Agent Pool".into(), "Free Agent".into(), String::new())
-        } else {
-            (format!("Team #{team_id}"), format!("#{team_id}"), String::new())
-        };
-
-
-        let region_id = regions[i];
-        let country_id = region_to_country.get(&region_id).copied()
-            .or_else(|| if region_id > 100 { Some(region_id / 100) } else { None })
-            .unwrap_or(0);
-        let iso_raw = country_map
-            .get(&country_id)
-            .cloned()
-            .filter(|iso| !iso.is_empty())
-            .or_else(|| (!team_iso.is_empty()).then_some(team_iso.clone()))
-            .unwrap_or_default();
-        let iso = normalize_iso(&iso_raw);
-
-        let cname = if country_name(&iso).is_empty() {
-            if iso.is_empty() { "Unknown".to_string() } else { iso.to_uppercase() }
-        } else {
-            country_name(&iso).to_string()
-        };
-
-        let age = age_at(birthdates[i], &game_date);
-        let name = choose_name(&firstnames[i], &lastnames[i], &fullnames[i], id);
-        let ca = (abilities[i] * 10.0).round() / 10.0;
-        let pot = (potentials[i] * 100.0).round() / 100.0;
-
-        let mut c = Cyclist {
-            id, name, firstname: firstnames[i].clone(), lastname: lastnames[i].clone(),
-            team_id, team: team_name, team_short,
-            nationality: cname.clone(), continent: continent(&iso).to_string(),
-            iso: iso.clone(), birthdate: birthdates[i].to_string(), age,
-            rider_type: rider_type(type_ids[i]).to_string(), rider_type_id: type_ids[i],
-            size: sizes[i], weight: weights[i],
-            current_ability: ca, potential: pot,
-            growth: 0.0, skill_average: 0.0, skill_ceiling: 0.0, peak_gap: 0, specialty_rating: 0,
-            scout_grade: String::new(), free_agent: is_free_agent(team_id),
-            flat: clamp(s_flat[i]), flat_p: clamp(s_flat_p[i]),
-            mountain: clamp(s_mtn[i]), mountain_p: clamp(s_mtn_p[i]),
-            med_mtn: clamp(s_med[i]), med_mtn_p: clamp(s_med_p[i]),
-            downhill: clamp(s_dh[i]), downhill_p: clamp(s_dh_p[i]),
-            cobble: clamp(s_cob[i]), cobble_p: clamp(s_cob_p[i]),
-            timetrial: clamp(s_tt[i]), timetrial_p: clamp(s_tt_p[i]),
-            prologue: clamp(s_pro[i]), prologue_p: clamp(s_pro_p[i]),
-            sprint: clamp(s_spr[i]), sprint_p: clamp(s_spr_p[i]),
-            acceleration: clamp(s_acc[i]), acceleration_p: clamp(s_acc_p[i]),
-            endurance: clamp(s_end[i]), endurance_p: clamp(s_end_p[i]),
-            resistance: clamp(s_res[i]), resistance_p: clamp(s_res_p[i]),
-            recuperation: clamp(s_rec[i]), recuperation_p: clamp(s_rec_p[i]),
-            hill: clamp(s_hil[i]), hill_p: clamp(s_hil_p[i]),
-            baroudeur: clamp(s_bar[i]), baroudeur_p: clamp(s_bar_p[i]),
-            scout_tour_potential: 0.0,
-            scout_mountain_potential: 0.0,
-            scout_timetrial_potential: 0.0,
-            scout_sprint_potential: 0.0,
-            scout_ardennes_potential: 0.0,
-            scout_cobble_potential: 0.0,
-            scout_flat_potential: 0.0,
-            top_skills: vec![],
-        };
-
-        let avg = (stat_avg(&c) * 10.0).round() / 10.0;
-        let ceil = (stat_ceil(&c) * 10.0).round() / 10.0;
-        c.skill_average = avg;
-        c.skill_ceiling = ceil;
-        c.growth = ((ceil - avg).max(0.0) * 10.0).round() / 10.0;
-        c.peak_gap = peak_gap(&c);
-        c.top_skills = top_skills(&c);
-        c.specialty_rating = c.top_skills.iter().map(|s| s.value).sum();
-        c.scout_grade = scout_grade(&c).to_string();
-
-        if !is_placeholder(&c) {
-            cyclist_rows[i] = Some(c.clone());
-            cyclists.push(c);
-        }
-    }
-
-    let scout_row_col = pick_col(&find_cols(db, 0, db.len(), b"IDscout_cyclist"), 0, 0);
-    let scout_row_count = count_sequential_ids(db, scout_row_col, NUM_CYCLISTS);
-    let scout_tour_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_tour"), 0, 0);
-    let scout_mountain_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_mountain"), 0, 0);
-    let scout_timetrial_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_timetrial"), 0, 0);
-    let scout_sprint_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_sprint"), 0, 0);
-    let scout_ardennes_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_ardenaises"), 0, 0);
-    let scout_cobble_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_flandriennes"), 0, 0);
-    let scout_flat_col = pick_col(&find_cols(db, 0, db.len(), b"value_f_potential_tr_flat"), 0, 0);
-    let mut scout_reports = Vec::new();
-    let mut seen_scout_ids = std::collections::HashSet::new();
-
-    for scout_row in 0..scout_row_count {
-        if let Some(c) = cyclist_rows.get(scout_row).and_then(|row| row.as_ref()) {
-            if !c.free_agent || c.age <= 0 || c.age > 23 {
+    // Staff payroll per team
+    let mut staff_payroll: HashMap<i32, i32> = HashMap::new();
+    let mut my_staff = Vec::new();
+    for (table, id_col, role) in [("DYN_coach", "IDcoach", "Coach"), ("DYN_physician", "IDphysician", "Physician"), ("DYN_scout", "IDscout", "Scout")] {
+        let t = Rows::new(db, table);
+        let (ids, teams, wages, ends, first, last) = (t.int(id_col), t.int("fkIDteam"), t.int("finan_i_wage"), t.int("gene_i_contract_end"), t.text("gene_sz_firstname"), t.text("gene_sz_lastname"));
+        for i in 0..t.len {
+            if teams[i] <= 0 {
                 continue;
             }
-            if seen_scout_ids.insert(c.id) {
-                let mut scout = c.clone();
-                scout.scout_tour_potential = if scout_tour_col > 0 { read_f32(db, scout_tour_col + scout_row * 4) } else { 0.0 };
-                scout.scout_mountain_potential = if scout_mountain_col > 0 { read_f32(db, scout_mountain_col + scout_row * 4) } else { 0.0 };
-                scout.scout_timetrial_potential = if scout_timetrial_col > 0 { read_f32(db, scout_timetrial_col + scout_row * 4) } else { 0.0 };
-                scout.scout_sprint_potential = if scout_sprint_col > 0 { read_f32(db, scout_sprint_col + scout_row * 4) } else { 0.0 };
-                scout.scout_ardennes_potential = if scout_ardennes_col > 0 { read_f32(db, scout_ardennes_col + scout_row * 4) } else { 0.0 };
-                scout.scout_cobble_potential = if scout_cobble_col > 0 { read_f32(db, scout_cobble_col + scout_row * 4) } else { 0.0 };
-                scout.scout_flat_potential = if scout_flat_col > 0 { read_f32(db, scout_flat_col + scout_row * 4) } else { 0.0 };
-                scout_reports.push(scout);
+            *staff_payroll.entry(teams[i]).or_default() += wages[i];
+            if teams[i] == user_team_id {
+                my_staff.push(Staff {
+                    id: ids[i],
+                    role: role.into(),
+                    name: format!("{} {}", first[i], last[i]).trim().to_string(),
+                    wage: wages[i],
+                    contract_end: ends[i],
+                });
             }
         }
     }
 
-    cyclists.sort_by(|a, b| b.current_ability.partial_cmp(&a.current_ability).unwrap_or(std::cmp::Ordering::Equal));
-    scout_reports.sort_by(|a, b| {
-        b.potential
-            .partial_cmp(&a.potential)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.growth.partial_cmp(&a.growth).unwrap_or(std::cmp::Ordering::Equal))
-            .then_with(|| a.age.cmp(&b.age))
-    });
+    // Sponsors
+    let sponsor_names: HashMap<i32, String> = {
+        let t = Rows::new(db, "DYN_sponsor");
+        t.int("IDsponsor").into_iter().zip(t.text("gene_sz_name")).collect()
+    };
+    struct SponsorDeal { row_id: i32, id: i32, start: i32, end: i32, budget: i32, next: i32 }
+    let team_sponsor: HashMap<i32, SponsorDeal> = {
+        let t = Rows::new(db, "DYN_team_sponsor");
+        let (row_ids, teams, sp, st, en, bu, nx) = (t.int("IDteam_sponsor"), t.int("fkIDteam"), t.int("fkIDsponsor"), t.int("value_i_contract_year_start"), t.int("value_i_contract_year_end"), t.int("value_i_budget"), t.int("value_i_budget_next"));
+        let mut m: HashMap<i32, SponsorDeal> = HashMap::new();
+        for i in 0..t.len {
+            // Prefer the deal covering the current season, else the latest one.
+            let deal = SponsorDeal { row_id: row_ids[i], id: sp[i], start: st[i], end: en[i], budget: bu[i], next: nx[i] };
+            let covers = deal.start <= now.year && now.year <= deal.end;
+            match m.get(&teams[i]) {
+                Some(prev) if (prev.start <= now.year && now.year <= prev.end) && !covers => {}
+                Some(prev) if !covers && prev.end >= deal.end => {}
+                _ => { m.insert(teams[i], deal); }
+            }
+        }
+        m
+    };
 
-    let mut teams: Vec<Team> = teams_map.iter().filter_map(|(&tid, (name, short, iso, c1, c2))| {
-        if name.is_empty() { return None; }
-        let cname = if country_name(iso).is_empty() { iso.to_uppercase() } else { country_name(iso).to_string() };
-        Some(Team { id: tid, name: name.clone(), short: short.clone(), country_iso: iso.clone(), country_name: cname, color1: c1.clone(), color2: c2.clone() })
-    }).collect();
+    // Teams
+    let tt = Rows::new(db, "DYN_team");
+    let (t_ids, t_names, t_shorts, t_abbr, t_countries, t_div, t_budget, t_eval, t_c1, t_c2) = (
+        tt.int("IDteam"), tt.text("gene_sz_name"), tt.text("gene_sz_shortname"), tt.text("abbreviation"),
+        tt.int("fkIDcountry"), tt.int("fkIDdivision"), tt.int("value_i_budget"), tt.float("value_f_current_evaluation"),
+        tt.text("gene_sz_color"), tt.text("gene_sz_secondary_color"),
+    );
+    let mut teams: Vec<Team> = Vec::new();
+    for i in 0..tt.len {
+        let id = t_ids[i];
+        if id <= 0 || id == FREE_AGENT_TEAM_ID || t_names[i].is_empty() || t_names[i] == "-" {
+            continue;
+        }
+        let country = countries.get(&t_countries[i]).cloned().unwrap_or_default();
+        let (division, tier) = divisions.get(&t_div[i]).cloned().unwrap_or_default();
+        let deal = team_sponsor.get(&id);
+        teams.push(Team {
+            id,
+            name: t_names[i].clone(),
+            short: if t_shorts[i].is_empty() { t_names[i].clone() } else { t_shorts[i].clone() },
+            abbreviation: t_abbr[i].clone(),
+            country_iso: country.iso.clone(),
+            country_name: country.name.clone(),
+            flag: country.flag.clone(),
+            color1: hex_color(&t_c1[i]),
+            color2: hex_color(&t_c2[i]),
+            division_id: t_div[i],
+            division,
+            tier,
+            budget: t_budget[i],
+            sponsor_id: deal.map(|d| d.id).unwrap_or(0),
+            sponsor_deal_id: deal.map(|d| d.row_id).unwrap_or(0),
+            sponsor: deal.and_then(|d| sponsor_names.get(&d.id).cloned()).unwrap_or_default(),
+            sponsor_budget: deal.map(|d| d.budget).unwrap_or(0),
+            sponsor_budget_next: deal.map(|d| d.next).unwrap_or(0),
+            sponsor_contract_end: deal.map(|d| d.end).unwrap_or(0),
+            staff_payroll: staff_payroll.get(&id).copied().unwrap_or(0),
+            evaluation: round1(t_eval[i]),
+            is_mine: id == user_team_id,
+            ..Default::default()
+        });
+    }
+    let team_index: HashMap<i32, usize> = teams.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+
+    // Market & scouting
+    let market: HashSet<i32> = db.ints("DYN_transfer_available_cyclist", "IDtransfer_available_cyclist").unwrap_or_default().into_iter().collect();
+    let my_scouts: HashSet<i32> = {
+        let t = Rows::new(db, "DYN_scout");
+        t.int("IDscout").into_iter().zip(t.int("fkIDteam")).filter(|&(_, team)| team == user_team_id && team > 0).map(|(id, _)| id).collect()
+    };
+    struct Report { date: i32, mine: bool, pots: [f32; 7] }
+    let mut reports: HashMap<i32, (i32, Report)> = HashMap::new(); // cyclist → (count, best report)
+    {
+        let t = Rows::new(db, "DYN_scout_report");
+        let (cyc, scout, date) = (t.int("fkIDcyclist"), t.int("fkIDscout"), t.int("gene_date_report"));
+        let pots: Vec<Vec<f32>> = [
+            "value_f_potential_tr_tour", "value_f_potential_tr_mountain", "value_f_potential_tr_timetrial",
+            "value_f_potential_tr_sprint", "value_f_potential_tr_ardenaises", "value_f_potential_tr_flandriennes",
+            "value_f_potential_tr_flat",
+        ]
+        .iter()
+        .map(|c| t.float(c))
+        .collect();
+        for i in 0..t.len {
+            let rep = Report { date: date[i], mine: my_scouts.contains(&scout[i]), pots: std::array::from_fn(|k| pots[k][i]) };
+            let entry = reports.entry(cyc[i]).or_insert((0, Report { date: 0, mine: false, pots: [0.0; 7] }));
+            entry.0 += 1;
+            // Prefer your own scouts, then the most recent report.
+            let better = (rep.mine && !entry.1.mine) || (rep.mine == entry.1.mine && rep.date >= entry.1.date);
+            if better {
+                entry.1 = rep;
+            }
+        }
+    }
+
+    // Riders
+    let ct = Rows::new(db, "DYN_cyclist");
+    let ids = ct.int("IDcyclist");
+    let (first, last, full) = (ct.text("gene_sz_firstname"), ct.text("gene_sz_lastname"), ct.text("gene_sz_firstlastname"));
+    let (team_ref, contract_ref, region, birth, type_id) = (ct.int("fkIDteam"), ct.int("fkIDcontract"), ct.int("fkIDregion"), ct.int("gene_i_birthdate"), ct.int("fkIDtype_rider"));
+    let (size, weight, state, retire, wins) = (ct.int("gene_i_size"), ct.int("gene_i_weight"), ct.int("fkIDcyclist_state"), ct.int("gene_b_will_retire"), ct.int("gene_i_nb_total_victory"));
+    let (ability, potential, popularity) = (ct.float("value_f_current_ability"), ct.float("value_f_potentiel"), ct.float("gene_f_popularity"));
+    let (tour, classic) = (ct.int("charac_i_tour"), ct.int("charac_i_classic"));
+    let stat = |c: &str| ct.int(c);
+    let s: Vec<(Vec<i32>, Vec<i32>)> = [
+        "plain", "mountain", "medium_mountain", "downhilling", "cobble", "timetrial", "prologue", "sprint",
+        "acceleration", "endurance", "resistance", "recuperation", "hill", "baroudeur",
+    ]
+    .iter()
+    .map(|k| (stat(&format!("charac_i_{k}")), stat(&format!("limit_i_{k}"))))
+    .collect();
+    let clamp = |v: i32| v.clamp(0, 100);
+
+    let mut cyclists = Vec::with_capacity(ct.len);
+    for i in 0..ct.len {
+        let id = ids[i];
+        if id <= 0 {
+            continue;
+        }
+        let team_id = team_ref[i];
+        let free_agent = team_id == FREE_AGENT_TEAM_ID || team_id <= 0;
+        let team = team_index.get(&team_id).map(|&ti| &teams[ti]);
+        let (team_name, team_short, division) = match team {
+            Some(t) => (t.name.clone(), t.short.clone(), t.division.clone()),
+            None if free_agent => ("Free Agent".into(), "Free Agent".into(), String::new()),
+            None => (format!("Team #{team_id}"), format!("#{team_id}"), String::new()),
+        };
+        let country = region_country.get(&region[i]).and_then(|cid| countries.get(cid)).cloned().unwrap_or_default();
+        let contract = contracts.get(&contract_ref[i]).filter(|_| !free_agent);
+        let name = {
+            let combined = format!("{} {}", first[i], last[i]).trim().to_string();
+            if !combined.is_empty() { combined } else if !full[i].is_empty() { full[i].clone() } else { format!("#{id}") }
+        };
+        let mut c = Cyclist {
+            id,
+            name,
+            firstname: first[i].clone(),
+            lastname: last[i].clone(),
+            team_id,
+            team: team_name,
+            team_short,
+            division,
+            nationality: if country.name.is_empty() { "Unknown".into() } else { country.name.clone() },
+            continent: if country.continent.is_empty() { "Unknown".into() } else { country.continent.clone() },
+            iso: country.iso.clone(),
+            flag: country.flag.clone(),
+            birthdate: birth[i].to_string(),
+            age: age_at(birth[i], now),
+            signable: parse_date(birth[i]).map(|b| now.year - b.year >= 18).unwrap_or(true),
+            signable_from: parse_date(birth[i]).map(|b| b.year + 18).unwrap_or(0),
+            rider_type: rider_type(type_id[i]).into(),
+            rider_type_id: type_id[i],
+            size: size[i],
+            weight: weight[i],
+            current_ability: round1(ability[i]),
+            potential: (potential[i] * 100.0).round() / 100.0,
+            free_agent,
+            is_mine: team_id == user_team_id && user_team_id > 0,
+            wage: contract.map(|c| c.wage).unwrap_or(0),
+            contract_start: contract.map(|c| c.start).unwrap_or(0),
+            contract_end: contract.map(|c| c.end).unwrap_or(0),
+            popularity: round1(popularity[i]),
+            wins: wins[i],
+            tour_rating: tour[i],
+            classic_rating: classic[i],
+            injured: matches!(state[i], 2 | 4),
+            will_retire: retire[i] != 0,
+            on_market: market.contains(&id),
+            ..Default::default()
+        };
+        let v = |k: usize| (clamp(s[k].0[i]), clamp(s[k].1[i]));
+        (c.flat, c.flat_p) = v(0);
+        (c.mountain, c.mountain_p) = v(1);
+        (c.med_mtn, c.med_mtn_p) = v(2);
+        (c.downhill, c.downhill_p) = v(3);
+        (c.cobble, c.cobble_p) = v(4);
+        (c.timetrial, c.timetrial_p) = v(5);
+        (c.prologue, c.prologue_p) = v(6);
+        (c.sprint, c.sprint_p) = v(7);
+        (c.acceleration, c.acceleration_p) = v(8);
+        (c.endurance, c.endurance_p) = v(9);
+        (c.resistance, c.resistance_p) = v(10);
+        (c.recuperation, c.recuperation_p) = v(11);
+        (c.hill, c.hill_p) = v(12);
+        (c.baroudeur, c.baroudeur_p) = v(13);
+        derive_metrics(&mut c);
+
+        if let Some((count, rep)) = reports.get(&id) {
+            c.scout_reports = *count;
+            c.my_report = rep.mine;
+            c.scout_report_date = date_text(rep.date);
+            [c.scout_tour_potential, c.scout_mountain_potential, c.scout_timetrial_potential, c.scout_sprint_potential,
+             c.scout_ardennes_potential, c.scout_cobble_potential, c.scout_flat_potential] = rep.pots;
+            c.scout_estimate = rep.pots.iter().copied().fold(0.0, f32::max);
+        }
+
+        if let Some(&ti) = team_index.get(&team_id) {
+            let t = &mut teams[ti];
+            t.riders += 1;
+            t.payroll += c.wage;
+            t.avg_ca += c.current_ability;
+            t.top_ca = t.top_ca.max(c.current_ability);
+        }
+        cyclists.push(c);
+    }
+    for t in &mut teams {
+        if t.riders > 0 {
+            t.avg_ca = round1(t.avg_ca / t.riders as f32);
+        }
+    }
+    cyclists.sort_by(|a, b| b.current_ability.total_cmp(&a.current_ability));
     teams.sort_by(|a, b| a.name.cmp(&b.name));
 
+    let finance = (user_team_id > 0).then(|| build_finance(db, user_team_id, &teams, &sponsor_names, my_staff));
+
+    let file_name = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    let user_team = teams.iter().find(|t| t.is_mine).map(|t| t.name.clone()).unwrap_or_default();
+    let game_date = date_text(date_int);
     Ok(SaveData {
+        meta: SaveMeta {
+            path: path.to_string(),
+            file_name,
+            game_date: game_date.clone(),
+            season: now.year,
+            mod_name: cfg.text("gene_sz_modname").first().cloned().unwrap_or_default(),
+            game_version: cfg.text("game_sz_version").first().cloned().unwrap_or_default(),
+            user_team_id,
+            user_team,
+            manager: user_idx.map(|i| user_names[i].clone()).unwrap_or_default(),
+        },
         cyclists,
-        scout_reports,
         teams,
-        game_date: date_text(&game_date),
+        finance,
+        game_date,
     })
+}
+
+fn build_finance(db: &Cdb, team_id: i32, teams: &[Team], sponsor_names: &HashMap<i32, String>, mut staff: Vec<Staff>) -> Finance {
+    let team = teams.iter().find(|t| t.id == team_id).cloned().unwrap_or_default();
+    let balance = career_balance(db);
+
+    let brands: Vec<BrandDeal> = {
+        let names: HashMap<i32, (String, i32)> = {
+            let t = Rows::new(db, "STA_brand");
+            let (ids, n, ty) = (t.int("IDbrand"), t.text("gene_sz_name"), t.int("fkIDbrand_type"));
+            (0..t.len).map(|i| (ids[i], (n[i].clone(), ty[i]))).collect()
+        };
+        let types: HashMap<i32, String> = {
+            let t = Rows::new(db, "STA_brand_type");
+            t.int("IDbrand_type").into_iter().zip(t.text("CONSTANT")).collect()
+        };
+        let t = Rows::new(db, "DYN_brand_contract");
+        let (ids, brand, year, budget, left, teams_col) = (t.int("IDbrand_contract"), t.int("fkIDbrand"), t.int("gene_i_year_contract"), t.int("value_i_budget"), t.int("value_i_years_left"), t.int("fkIDteam"));
+        let mut v: Vec<BrandDeal> = (0..t.len)
+            .filter(|&i| teams_col[i] == team_id && (left[i] > 0 || budget[i] > 0))
+            .map(|i| {
+                let (name, ty) = names.get(&brand[i]).cloned().unwrap_or_default();
+                let category = types.get(&ty).map(|c| {
+                    let mut s = c.to_lowercase();
+                    if let Some(f) = s.get_mut(0..1) { f.make_ascii_uppercase(); }
+                    s
+                }).unwrap_or_default();
+                BrandDeal { id: ids[i], brand: name, category, budget: budget[i], year: year[i], years_left: left[i] }
+            })
+            .collect();
+        v.sort_by(|a, b| b.budget.cmp(&a.budget));
+        v
+    };
+
+    let offers: Vec<SponsorOffer> = {
+        let t = Rows::new(db, "DYN_sponsor_offer");
+        let (ids, contact, deadline, budget, state, duration) = (t.int("IDsponsor_offer"), t.int("value_i_contact_date"), t.int("value_i_deadline_date"), t.int("value_i_budget"), t.int("value_i_state"), t.int("value_i_duration"));
+        (0..t.len)
+            .map(|i| SponsorOffer {
+                sponsor_id: ids[i],
+                sponsor: sponsor_names.get(&ids[i]).cloned().unwrap_or_else(|| format!("Sponsor #{}", ids[i])),
+                budget: budget[i],
+                duration: duration[i],
+                contact_date: date_text(contact[i]),
+                deadline: date_text(deadline[i]),
+                state: state[i],
+            })
+            .collect()
+    };
+
+    let ledger: Vec<LedgerEntry> = {
+        let t = Rows::new(db, "DYN_finance");
+        let (ids, codes, dates, values, args) = (t.int("IDoperation"), t.int("gene_strID_operation_string"), t.int("gene_i_date"), t.int("gene_i_value"), t.text("gene_sz_argument"));
+        let mut v: Vec<(i32, LedgerEntry)> = (0..t.len)
+            .map(|i| {
+                let (category, label) = ledger_kind(codes[i]);
+                (dates[i], LedgerEntry {
+                    id: ids[i],
+                    date: date_text(dates[i]),
+                    amount: values[i],
+                    category: category.into(),
+                    label: if category == "other" { format!("Other (#{})", codes[i]) } else { label.into() },
+                    detail: args[i].clone(),
+                })
+            })
+            .collect();
+        // IDs restart every season, so order by date first and keep file order within a day.
+        v.sort_by_key(|(d, _)| *d);
+        v.into_iter().map(|(_, e)| e).collect()
+    };
+
+    staff.sort_by(|a, b| a.role.cmp(&b.role).then(b.wage.cmp(&a.wage)));
+    Finance {
+        team_id,
+        balance: balance.map(|b| b as f64).unwrap_or(0.0),
+        balance_editable: balance.is_some(),
+        season_budget: team.budget,
+        sponsor_id: team.sponsor_id,
+        sponsor_deal_id: team.sponsor_deal_id,
+        sponsor: team.sponsor.clone(),
+        sponsor_budget: team.sponsor_budget,
+        sponsor_budget_next: team.sponsor_budget_next,
+        sponsor_contract_start: {
+            let t = Rows::new(db, "DYN_team_sponsor");
+            let (teams_col, sp, st) = (t.int("fkIDteam"), t.int("fkIDsponsor"), t.int("value_i_contract_year_start"));
+            (0..t.len).find(|&i| teams_col[i] == team_id && sp[i] == team.sponsor_id).map(|i| st[i]).unwrap_or(0)
+        },
+        sponsor_contract_end: team.sponsor_contract_end,
+        monthly_rider_wages: team.payroll,
+        monthly_staff_wages: team.staff_payroll,
+        staff,
+        brands,
+        offers,
+        ledger,
+    }
+}
+
+/// Cash balance: the `SOLDE` row of `GAM_career_data`.
+pub fn career_balance(db: &Cdb) -> Option<f32> {
+    let row = db.find_row_str("GAM_career_data", "CONSTANT", "SOLDE")?;
+    db.floats("GAM_career_data", "value")?.get(row).copied()
 }
 
 #[cfg(test)]
@@ -1136,124 +881,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diag_name_bytes() {
-        let path = "C:/Users/YoelM/AppData/Roaming/Pro Cycling Manager 2025/Cloud/76561198036384740/Career_Z.cdb";
-        let raw = std::fs::read(path).unwrap();
-        let mut db = Vec::new();
-        ZlibDecoder::new(&raw[0x0C..]).read_to_end(&mut db).unwrap();
-
-        let cyclist_id_col = pick_col(&find_cols(&db, 0, db.len(), b"IDcyclist"), 100_000, OFF_ID);
-        let raw_ln = pick_col(&find_cols(&db, 0, db.len(), b"gene_sz_lastname"), cyclist_id_col, OFF_LASTNAME_LEN);
-        let raw_fn = pick_col(&find_cols(&db, 0, db.len(), b"gene_sz_firstname"), cyclist_id_col, OFF_FIRSTNAME_LEN);
-
-        let ln_col = validated_len_col(&db, raw_ln, NUM_CYCLISTS);
-        let fn_col = validated_len_col(&db, raw_fn, NUM_CYCLISTS);
-        let ln_data = string_data_start(&db, ln_col, NUM_CYCLISTS);
-        let fn_data = string_data_start(&db, fn_col, NUM_CYCLISTS);
-
-        println!("ln_data=0x{:X}  fn_data=0x{:X}", ln_data, fn_data);
-
-        // Find "Bekele" in the decompressed buffer
-        for needle in &[b"Bekele" as &[u8], b"Mosca", b"Luigi", b"Eskender"] {
-            if let Some(pos) = db.windows(needle.len()).position(|w| w == *needle) {
-                let name_str = std::str::from_utf8(needle).unwrap();
-                // How many null bytes are between ln_data and this position?
-                let nulls = db[ln_data..pos].iter().filter(|&&b| b == 0).count();
-                println!("{:?} found at 0x{:X}, offset from ln_data={}, nulls_before={}", name_str, pos, pos as i64 - ln_data as i64, nulls);
+    fn extracts_career_save() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+        for name in ["Career_2 copy.cdb", "Career_2.cdb"] {
+            let path = format!("{root}/{name}");
+            if !std::path::Path::new(&path).is_file() {
+                continue;
             }
-        }
-
-        // Show bytes at ln_data and fn_data around the problematic idx range
-        let ids = read_ints(&db, cyclist_id_col, NUM_CYCLISTS);
-        // Find idx of id=7708
-        if let Some(idx) = ids.iter().position(|&id| id == 7708) {
-            println!("\nid=7708 at idx={}", idx);
-            // Compute the byte offset to this entry's name in ln_data
-            let mut pos = ln_data;
-            for i in 0..idx {
-                let end = db[pos..].iter().position(|&b| b == 0).map(|e| pos+e).unwrap_or(pos);
-                pos = end + 1;
-            }
-            let end = db[pos..].iter().position(|&b| b == 0).map(|e| pos+e).unwrap_or(pos);
-            println!("  lastname at 0x{:X}: {:?}", pos, std::str::from_utf8(&db[pos..end]).unwrap_or("?"));
-            // Show 20 bytes before and after that position in the buffer
-            let show_start = pos.saturating_sub(10);
-            println!("  context (lastname data around 0x{:X}): {:?}", show_start, &db[show_start..show_start.min(db.len()).max(pos+30).min(db.len())]);
+            let db = Cdb::open(&path).unwrap();
+            let data = extract(&db, &path).unwrap();
+            assert_eq!(data.cyclists.len(), db.rows("DYN_cyclist"));
+            assert!(data.teams.len() > 100);
+            assert!(data.meta.user_team_id > 0);
+            let fin = data.finance.as_ref().unwrap();
+            assert!(fin.balance_editable);
+            assert!(fin.monthly_rider_wages > 0);
+            let mine: Vec<_> = data.cyclists.iter().filter(|c| c.is_mine).collect();
+            assert!(!mine.is_empty());
+            assert_eq!(mine.iter().map(|c| c.wage).sum::<i32>(), fin.monthly_rider_wages);
+            let named = data.cyclists.iter().filter(|c| !c.name.starts_with('#')).count();
+            assert!(named * 100 / data.cyclists.len() > 98, "{name}: too many unnamed riders");
+            let known = data.cyclists.iter().filter(|c| c.nationality != "Unknown").count();
+            assert!(known * 100 / data.cyclists.len() > 95, "{name}: too many unknown countries");
+            println!(
+                "{name}: {} riders, {} teams, team={} balance={} wages={} staff={} prospects={}",
+                data.cyclists.len(), data.teams.len(), data.meta.user_team, fin.balance,
+                fin.monthly_rider_wages, fin.monthly_staff_wages,
+                data.cyclists.iter().filter(|c| c.scout_reports > 0).count()
+            );
         }
     }
+}
 
+#[cfg(test)]
+mod dump {
+    /// `PCM_DUMP=<out.json> cargo test dump_json -- --ignored` writes the UI model for browser previews.
     #[test]
-    fn diag_extract_z() {
-        let path = "C:/Users/YoelM/AppData/Roaming/Pro Cycling Manager 2025/Cloud/76561198036384740/Career_Z.cdb";
-        let data = extract(path).unwrap();
-        println!("total cyclists: {}", data.cyclists.len());
-        // Find the cyclist the user sees as "Luigi Mosca" Ethiopian climber
-        for target in &[7703i32, 7708, 7598] {
-            match data.cyclists.iter().find(|c| c.id == *target) {
-                Some(c) => println!("id={}: name={:?} nat={:?} team={:?} ca={} age={}", c.id, c.name, c.nationality, c.team_short, c.current_ability, c.age),
-                None => println!("id={}: NOT FOUND", target),
-            }
-        }
-        // Also print first 5 cyclists
-        for c in data.cyclists.iter().take(5) {
-            println!("  id={} name={:?} nat={:?} age={}", c.id, c.name, c.nationality, c.age);
-        }
-        // Search by nationality=Ethiopia
-        let eth: Vec<_> = data.cyclists.iter().filter(|c| c.nationality == "Ethiopia").collect();
-        println!("Ethiopian cyclists: {}", eth.len());
-        for c in eth.iter().take(5) {
-            println!("  id={} name={:?} team={:?} ca={}", c.id, c.name, c.team_short, c.current_ability);
-        }
-    }
-
-    #[test]
-    fn diag_career_z() {
-        let path = "C:/Users/YoelM/AppData/Roaming/Pro Cycling Manager 2025/Cloud/76561198036384740/Career_Z.cdb";
-        let raw = std::fs::read(path).unwrap();
-        let mut db = Vec::new();
-        ZlibDecoder::new(&raw[0x0C..]).read_to_end(&mut db).unwrap();
-
-        let cyclist_id_col = pick_col(&find_cols(&db, 0, db.len(), b"IDcyclist"), 100_000, OFF_ID);
-        println!("cyclist_id_col=0x{:X}", cyclist_id_col);
-
-        let raw_ln = pick_col(&find_cols(&db, 0, db.len(), b"gene_sz_lastname"), cyclist_id_col, OFF_LASTNAME_LEN);
-        let raw_fn = pick_col(&find_cols(&db, 0, db.len(), b"gene_sz_firstname"), cyclist_id_col, OFF_FIRSTNAME_LEN);
-        let raw_fu = pick_col(&find_cols(&db, 0, db.len(), b"gene_sz_firstlastname"), cyclist_id_col, OFF_FULLNAME_LEN);
-        println!("raw_lastname_col=0x{:X}  raw_firstname_col=0x{:X}  raw_fullname_col=0x{:X}", raw_ln, raw_fn, raw_fu);
-
-        let ln_col = validated_len_col(&db, raw_ln, NUM_CYCLISTS);
-        let fn_col = validated_len_col(&db, raw_fn, NUM_CYCLISTS);
-        let fu_col = validated_len_col(&db, raw_fu, NUM_CYCLISTS);
-        println!("validated_lastname=0x{:X}  validated_firstname=0x{:X}  validated_fullname=0x{:X}", ln_col, fn_col, fu_col);
-
-        let ln_data = string_data_start(&db, ln_col, NUM_CYCLISTS);
-        let fn_data = string_data_start(&db, fn_col, NUM_CYCLISTS);
-        let fu_data = string_data_start(&db, fu_col, NUM_CYCLISTS);
-        println!("lastname_data=0x{:X}  firstname_data=0x{:X}  fullname_data=0x{:X}", ln_data, fn_data, fu_data);
-
-        // Print first 10 len values at each validated col
-        println!("First 5 len[i] at lastname_col:");
-        for i in 0..5 { println!("  [{}]={}", i, read_u32(&db, ln_col + i*4)); }
-        println!("First 5 len[i] at firstname_col:");
-        for i in 0..5 { println!("  [{}]={}", i, read_u32(&db, fn_col + i*4)); }
-
-        // Read first 10 names from each field
-        let lns = read_nullterm(&db, ln_data, 15);
-        let fns = read_nullterm(&db, fn_data, 15);
-        let fus = read_nullterm(&db, fu_data, 15);
-        println!("First 15 lastnames: {:?}", lns);
-        println!("First 15 firstnames: {:?}", fns);
-        println!("First 15 fullnames: {:?}", fus);
-
-        // Look up by name: find "Bekele" or "Milan" in the data buffer
-        let ids = read_ints(&db, cyclist_id_col, NUM_CYCLISTS);
-        let all_lns = read_nullterm(&db, ln_data, NUM_CYCLISTS);
-        let all_fns = read_nullterm(&db, fn_data, NUM_CYCLISTS);
-        for (i, (ln, fn_)) in all_lns.iter().zip(all_fns.iter()).enumerate() {
-            if ln.to_lowercase().contains("bekele") || fn_.to_lowercase().contains("eskender")
-            || fn_.to_lowercase().contains("milan") || ln.to_lowercase().contains("mosca") {
-                println!("  idx={} id={} first={:?} last={:?}", i, ids[i], fn_, ln);
-            }
-        }
+    #[ignore]
+    fn dump_json() {
+        let out = std::env::var("PCM_DUMP").expect("set PCM_DUMP");
+        let src = std::env::var("PCM_SAVE").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../Career_2 copy.cdb").into());
+        let db = crate::cdb::Cdb::open(&src).unwrap();
+        let data = super::extract(&db, &src).unwrap();
+        std::fs::write(out, serde_json::to_string(&data).unwrap()).unwrap();
     }
 }
