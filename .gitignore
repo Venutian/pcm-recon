@@ -29,3 +29,4 @@ PCMDBEdit/PCM DBEdit By Davy.exe
 PCMDBEdit/PCM DBEdit By Davy.exe.config
 PCMDBEdit/PCM DBEdit By Davy.pdb
 .playwright-mcp/
+src-tauri/src/names.rs
