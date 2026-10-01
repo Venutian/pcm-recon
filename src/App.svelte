@@ -22,10 +22,11 @@
   import Teams from "./lib/sections/Teams.svelte";
   import Rankings from "./lib/sections/Rankings.svelte";
   import Database from "./lib/sections/Database.svelte";
+  import NamePacks from "./lib/sections/NamePacks.svelte";
 
   const SECTIONS: Record<string, any> = {
     Overview, Prospects, Scout, Market, Shortlist, Compare,
-    "My team": MyTeam, Finances, Teams, Rankings, Database,
+    "My team": MyTeam, Finances, Teams, Rankings, Database, "Name packs": NamePacks,
   };
   const GROUPS = ["Scouting", "Your team", "League", "Tools"] as const;
 
@@ -68,7 +69,7 @@
   <nav class="side">
     <div class="brand">
       <img class="mark" src="/logo.svg" alt="" />
-      <div><strong>PCM Recon</strong><small>v3.0</small></div>
+      <div><strong>PCM Recon</strong><small>v3.1</small></div>
     </div>
     {#if $save}
       {#each GROUPS as g}

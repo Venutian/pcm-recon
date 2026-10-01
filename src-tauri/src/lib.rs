@@ -1,5 +1,6 @@
 mod cdb;
 mod edit;
+mod names;
 mod parser;
 
 #[cfg(target_os = "windows")]
@@ -265,6 +266,134 @@ fn reveal(dir: &Path) -> Result<(), String> {
     Command::new(cmd).arg(dir).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+// ─── Name packs ───────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct NameDb {
+    game: String,
+    path: String,
+    current_first: Vec<String>,
+    current_last: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct NamePacksInfo {
+    packs: Vec<names::PackInfo>,
+    databases: Vec<NameDb>,
+    copies_folder: String,
+    /// Country id of the pack's nation, taken from the loaded save (the name database has no country table).
+    country_id: i32,
+}
+
+fn pack_or_err(key: &str) -> Result<&'static names::NamePack, String> {
+    names::pack(key).ok_or_else(|| format!("Unknown name pack {key}"))
+}
+
+fn copies_folder(app: &tauri::AppHandle) -> PathBuf {
+    app.path()
+        .document_dir()
+        .unwrap_or_else(|_| app_data(app).unwrap_or_default())
+        .join("PCM Recon")
+        .join("Name packs")
+}
+
+#[tauri::command]
+async fn name_packs(app: tauri::AppHandle, state: tauri::State<'_, AppState>, pack: String, save_path: String) -> Result<NamePacksInfo, String> {
+    let p = pack_or_err(&pack)?;
+    let folder = copies_folder(&app);
+    let country_id = with_db(&state, &save_path, |db| names::country_id(db, p.country_iso))?
+        .ok_or_else(|| format!("{} isn't a country in this save", p.country_iso.to_uppercase()))?;
+    blocking(move || {
+        let mut databases = Vec::new();
+        for (game, path) in names::find_name_databases() {
+            let db = Cdb::open(&path.to_string_lossy())?;
+            let (current_first, current_last) = names::current_lists(&db, country_id);
+            databases.push(NameDb { game, path: path.to_string_lossy().into(), current_first, current_last });
+        }
+        Ok(NamePacksInfo { packs: names::PACKS.iter().map(|p| names::pack_info(p)).collect(), databases, copies_folder: folder.to_string_lossy().into(), country_id })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct GameListResult {
+    report: names::ListReport,
+    backup: String,
+    copy: String,
+}
+
+/// Rewrites the game's generator name lists and keeps copies (original + edited) in Documents,
+/// so the change can be restored or re-applied after a game update.
+#[tauri::command]
+async fn apply_name_pack_to_game(app: tauri::AppHandle, pack: String, path: String, country_id: i32) -> Result<GameListResult, String> {
+    let p = pack_or_err(&pack)?;
+    let file = PathBuf::from(&path);
+    if file.file_name().map(|f| f != "OfficialLocal.cdb").unwrap_or(true) {
+        return Err("Pick the game's OfficialLocal.cdb".into());
+    }
+    let data_dir = app_data(&app)?;
+    let folder = copies_folder(&app);
+    blocking(move || {
+        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        let original = folder.join("OfficialLocal.original.cdb");
+        if !original.exists() {
+            std::fs::copy(&file, &original).map_err(|e| format!("Cannot keep the original copy: {e}"))?;
+        }
+        let (report, backup, db) = edit::transform(&data_dir, &file, |db| names::apply_to_lists(db, country_id, p))?;
+        let copy = folder.join(format!("OfficialLocal.{}.cdb", p.key));
+        std::fs::write(&copy, db.to_file_bytes()?).map_err(|e| e.to_string())?;
+        let note = format!(
+            "PCM Recon name pack: {}
+
+OfficialLocal.original.cdb  the game's file before any change
+{}  the file with the name pack applied
+
+After a game update, open PCM Recon > Name packs and press \"Apply to the game\" again.
+That keeps any new content from the update. Copying the edited file back by hand also works, but it
+undoes whatever the update changed in that file.
+
+The game reads: {}
+",
+            p.label, copy.file_name().unwrap().to_string_lossy(), file.display()
+        );
+        let _ = std::fs::write(folder.join("README.txt"), note);
+        Ok(GameListResult { report, backup: backup.to_string_lossy().into(), copy: copy.to_string_lossy().into() })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct SaveRenameResult {
+    renames: Vec<names::Rename>,
+    backup: String,
+    #[serde(flatten)]
+    data: SaveData,
+    modified_ms: u64,
+}
+
+/// Fixes the names of riders the game already generated in this career.
+#[tauri::command]
+async fn apply_name_pack_to_save(app: tauri::AppHandle, state: tauri::State<'_, AppState>, pack: String, path: String) -> Result<SaveRenameResult, String> {
+    let p = pack_or_err(&pack)?;
+    let save = resolve_save_path(&path)?;
+    let data_dir = app_data(&app)?;
+    let save2 = save.clone();
+    let (renames, backup, db, data) = blocking(move || {
+        let (renames, backup, db) = edit::transform(&data_dir, &save2, |db| {
+            let start = db.ints("GAM_config", "game_i_starting_year").and_then(|v| v.first().copied()).unwrap_or(2000);
+            let real = names::base_database_for(db).map(|b| names::real_rider_names(&b)).unwrap_or_default();
+            // Riders born before the career's first junior class can't have been generated.
+            names::rename_generated(db, p, &real, start - 19)
+        })?;
+        let data = parser::extract(&db, &save2.to_string_lossy())?;
+        Ok((renames, backup, db, data))
+    })
+    .await?;
+    let modified = modified_ms(&save);
+    *state.loaded.lock().map_err(|_| "State lock poisoned")? = Some(Loaded { path: save, db });
+    Ok(SaveRenameResult { renames, backup: backup.to_string_lossy().into(), data, modified_ms: modified })
+}
+
 // ─── Database browser ─────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -366,6 +495,9 @@ pub fn run() {
             list_backups,
             restore_backup,
             open_backup_folder,
+            name_packs,
+            apply_name_pack_to_game,
+            apply_name_pack_to_save,
             db_tables,
             db_page,
             load_workspace,

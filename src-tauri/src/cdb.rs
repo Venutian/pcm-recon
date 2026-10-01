@@ -420,6 +420,103 @@ impl Cdb {
         Ok(old)
     }
 
+    /// Raw bytes of every string in a column (without the trailing NUL), for lossless rewrites.
+    pub fn raw_strings(&self, table: &str, col: &str) -> Option<Vec<Vec<u8>>> {
+        let (t, c) = self.column(table, col)?;
+        if c.ty != ColType::Str {
+            return None;
+        }
+        let heap = c.heap.clone()?;
+        let mut pos = heap.start + 4;
+        let mut out = Vec::with_capacity(t.rows);
+        for r in 0..t.rows {
+            let len = self.word(c, r).map(u32::from_le_bytes).unwrap_or(0) as usize;
+            let end = (pos + len).min(heap.end);
+            let bytes = &self.data[pos.min(end)..end];
+            out.push(bytes.split(|&b| b == 0).next().unwrap_or(bytes).to_vec());
+            pos = end;
+        }
+        Some(out)
+    }
+
+    /// Replaces whole columns of `table`. When the new length differs from the current row
+    /// count, every column of the table must be supplied (rows are added or removed).
+    /// All enclosing block sizes are recomputed, so text may grow or shrink freely.
+    pub fn rewrite_columns(&mut self, table: &str, cols: &[(&str, Values)]) -> Result<(), String> {
+        let t = self.table(table).ok_or_else(|| format!("Table {table} not found"))?;
+        let n = cols.first().map(|(_, v)| v.len()).ok_or("No columns to rewrite")?;
+        if cols.iter().any(|(_, v)| v.len() != n) {
+            return Err(format!("{table}: columns have different lengths"));
+        }
+        if n != t.rows {
+            let missing: Vec<&str> = t.columns.iter().map(|c| c.name.as_str()).filter(|c| !cols.iter().any(|(n, _)| n == c)).collect();
+            if !missing.is_empty() {
+                return Err(format!("{table}: changing the row count needs every column; missing {}", missing.join(", ")));
+            }
+        }
+        let mut repl: HashMap<(String, String, u32), Vec<u8>> = HashMap::new();
+        for (name, values) in cols {
+            let c = t.column(name).ok_or_else(|| format!("Column {table}.{name} not found"))?;
+            let ok = matches!((c.ty, values), (ColType::Int, Values::Int(_)) | (ColType::Float, Values::Float(_)) | (ColType::Str, Values::Text(_)));
+            if !ok {
+                return Err(format!("{table}.{name} is a {} column; wrong value type", c.ty.label()));
+            }
+            let (cells, heap) = values.encode();
+            repl.insert((table.into(), name.to_string(), kind::CELLS), cells);
+            if let Some(h) = heap {
+                repl.insert((table.into(), name.to_string(), kind::HEAP), h);
+            }
+        }
+        repl.insert((table.into(), String::new(), kind::ROW_COUNT), (n as u32).to_le_bytes().to_vec());
+        let mut out = Vec::with_capacity(self.data.len() + 4096);
+        self.emit(0, "", "", &repl, &mut out)?;
+        *self = Self::from_raw(self.magic, out)?;
+        Ok(())
+    }
+
+    /// Re-serialises the block at `off`, substituting replaced leaf payloads and fixing sizes.
+    fn emit(&self, off: usize, table: &str, col: &str, repl: &HashMap<(String, String, u32), Vec<u8>>, out: &mut Vec<u8>) -> Result<(), String> {
+        let data = &self.data;
+        let b = block_at(data, off)?;
+        let start = out.len();
+        out.extend_from_slice(&data[off..b.payload]);
+        let is_container = matches!(b.kind, 0 | kind::TABLE_LIST | kind::TABLE | kind::COLUMN_LIST | kind::COLUMN);
+        if is_container {
+            let name = b.names.first().map(String::as_str).unwrap_or("");
+            let (table, col) = match b.kind {
+                kind::TABLE => (name, ""),
+                kind::COLUMN => (table, name),
+                _ => (table, col),
+            };
+            let mut p = b.payload;
+            if data.get(p..p + 4) == Some(&DD[..]) {
+                out.extend_from_slice(&data[p..p + 8]);
+                p += 8;
+            }
+            while p + 4 <= b.end && data[p..p + 4] == AA {
+                let child = block_at(data, p)?;
+                self.emit(p, table, col, repl, out)?;
+                p += child.size;
+            }
+            out.extend_from_slice(&data[p..off + b.size]);
+        } else {
+            let key_col = if b.kind == kind::ROW_COUNT { "" } else { col };
+            match repl.get(&(table.to_string(), key_col.to_string(), b.kind)) {
+                Some(payload) => {
+                    out.extend_from_slice(payload);
+                    while (out.len() - start) % 4 != 0 {
+                        out.push(0);
+                    }
+                    out.extend_from_slice(&CC);
+                }
+                None => out.extend_from_slice(&data[b.payload..off + b.size]),
+            }
+        }
+        let size = (out.len() - start) as u32;
+        out[start + 4..start + 8].copy_from_slice(&size.to_le_bytes());
+        Ok(())
+    }
+
     /// Re-encodes the database into the on-disk `.cdb` format.
     pub fn to_file_bytes(&self) -> Result<Vec<u8>, String> {
         let mut enc = ZlibEncoder::new(Vec::with_capacity(self.data.len() / 3), Compression::default());
@@ -432,6 +529,58 @@ impl Cdb {
         out.extend_from_slice(&compressed);
         Ok(out)
     }
+}
+
+/// New contents for one column in [`Cdb::rewrite_columns`].
+#[derive(Clone, Debug)]
+pub enum Values {
+    Int(Vec<i32>),
+    #[allow(dead_code)]
+    Float(Vec<f32>),
+    /// Raw string bytes without the trailing NUL (see [`encode_text`]).
+    Text(Vec<Vec<u8>>),
+}
+
+impl Values {
+    fn len(&self) -> usize {
+        match self {
+            Values::Int(v) => v.len(),
+            Values::Float(v) => v.len(),
+            Values::Text(v) => v.len(),
+        }
+    }
+
+    /// (cell block payload, heap block payload for strings)
+    fn encode(&self) -> (Vec<u8>, Option<Vec<u8>>) {
+        match self {
+            Values::Int(v) => (v.iter().flat_map(|x| x.to_le_bytes()).collect(), None),
+            Values::Float(v) => (v.iter().flat_map(|x| x.to_le_bytes()).collect(), None),
+            Values::Text(v) => {
+                let cells = v.iter().flat_map(|s| (s.len() as u32 + 1).to_le_bytes()).collect();
+                let total: usize = v.iter().map(|s| s.len() + 1).sum();
+                let mut heap = Vec::with_capacity(total + 4);
+                heap.extend_from_slice(&(total as u32).to_le_bytes());
+                for s in v {
+                    heap.extend_from_slice(s);
+                    heap.push(0);
+                }
+                (cells, Some(heap))
+            }
+        }
+    }
+}
+
+/// Encodes text the way PCM stores it (Windows-1252); characters outside it become '?'.
+pub fn encode_text(s: &str) -> Vec<u8> {
+    s.chars()
+        .map(|ch| {
+            let code = ch as u32;
+            if code < 0x80 || (0xA0..=0xFF).contains(&code) {
+                return code as u8;
+            }
+            (0x80u8..0xA0).find(|&b| cp1252(b) == ch).unwrap_or(b'?')
+        })
+        .collect()
 }
 
 // ─── Text decoding ──────────────────────────────────────────────────────────
@@ -493,5 +642,44 @@ mod tests {
         assert_eq!(db.floats("GAM_career_data", "value").unwrap()[solde] as f64, old);
         assert!(copy.set_number("DYN_team", "value_i_budget", 0, 1.5).is_err());
         assert!(copy.set_number("DYN_team", "gene_sz_name", 0, 1.0).is_err());
+    }
+
+    #[test]
+    fn rewrites_text_and_rows_losslessly() {
+        let Some(path) = sample_path() else { return };
+        let db = Cdb::open(&path).unwrap();
+
+        // Rewriting a column with its own contents must reproduce the file byte for byte.
+        let mut same = Cdb::open(&path).unwrap();
+        let names = same.raw_strings("DYN_cyclist", "gene_sz_lastname").unwrap();
+        same.rewrite_columns("DYN_cyclist", &[("gene_sz_lastname", Values::Text(names.clone()))]).unwrap();
+        assert!(same.data == db.data, "identity rewrite changed the database");
+
+        // Longer text: neighbours and every other table stay intact.
+        let mut edited = Cdb::open(&path).unwrap();
+        let mut longer = names.clone();
+        longer[0] = encode_text("Ghebremedhin-Tesfamariam");
+        edited.rewrite_columns("DYN_cyclist", &[("gene_sz_lastname", Values::Text(longer))]).unwrap();
+        let reread = Cdb::from_file_bytes(&edited.to_file_bytes().unwrap()).unwrap();
+        let after = reread.strings("DYN_cyclist", "gene_sz_lastname").unwrap();
+        assert_eq!(after[0], "Ghebremedhin-Tesfamariam");
+        assert_eq!(after[1..], db.strings("DYN_cyclist", "gene_sz_lastname").unwrap()[1..]);
+        assert_eq!(reread.strings("DYN_team", "gene_sz_name"), db.strings("DYN_team", "gene_sz_name"));
+        assert_eq!(reread.ints("DYN_cyclist", "IDcyclist"), db.ints("DYN_cyclist", "IDcyclist"));
+
+        // Adding a row to a small table.
+        let mut grown = Cdb::open(&path).unwrap();
+        let t = "GAM_career_data";
+        let mut ids = grown.ints(t, "IDcareer_data").unwrap();
+        let mut vals = grown.floats(t, "value").unwrap();
+        let mut consts = grown.raw_strings(t, "CONSTANT").unwrap();
+        ids.push(999);
+        vals.push(1.0);
+        consts.push(b"PCMRECON_TEST".to_vec());
+        grown.rewrite_columns(t, &[("IDcareer_data", Values::Int(ids)), ("value", Values::Float(vals)), ("CONSTANT", Values::Text(consts))]).unwrap();
+        let reread = Cdb::from_file_bytes(&grown.to_file_bytes().unwrap()).unwrap();
+        assert_eq!(reread.rows(t), db.rows(t) + 1);
+        assert_eq!(reread.strings(t, "CONSTANT").unwrap().last().unwrap(), "PCMRECON_TEST");
+        assert_eq!(reread.rows("DYN_cyclist"), db.rows("DYN_cyclist"));
     }
 }

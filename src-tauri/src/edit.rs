@@ -87,7 +87,7 @@ fn verify(bytes: &[u8], edits: &[CellEdit]) -> Result<(), String> {
 }
 
 /// Writes `bytes` next to `path` and swaps it in, so a crash never leaves a half-written save.
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("pcmrecon-tmp");
     std::fs::write(&tmp, bytes).map_err(|e| format!("Cannot write {}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| {
@@ -110,7 +110,7 @@ pub fn backup_dir(app_data: &Path, save: &Path) -> PathBuf {
     app_data.join("backups").join(path_tag(save))
 }
 
-fn create_backup(app_data: &Path, save: &Path, raw: &[u8]) -> Result<PathBuf, String> {
+pub(crate) fn create_backup(app_data: &Path, save: &Path, raw: &[u8]) -> Result<PathBuf, String> {
     let dir = backup_dir(app_data, save);
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create backup folder: {e}"))?;
     let stem = save.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "save".into());
@@ -194,6 +194,19 @@ pub fn edit_save(app_data: &Path, save: &Path, edits: &[CellEdit]) -> Result<Wri
         }
     }
     Ok(WriteResult { outcomes, backup, db })
+}
+
+/// Reads a database fresh from disk, lets `change` modify it, verifies the result parses,
+/// backs up the original and writes the new file atomically.
+pub fn transform<T>(app_data: &Path, file: &Path, change: impl FnOnce(&mut Cdb) -> Result<T, String>) -> Result<(T, PathBuf, Cdb), String> {
+    let raw = std::fs::read(file).map_err(|e| format!("Cannot read {}: {e}", file.display()))?;
+    let mut db = Cdb::from_file_bytes(&raw)?;
+    let result = change(&mut db)?;
+    let bytes = db.to_file_bytes()?;
+    Cdb::from_file_bytes(&bytes).map_err(|e| format!("Verification failed: {e}"))?;
+    let backup = create_backup(app_data, file, &raw)?;
+    atomic_write(file, &bytes)?;
+    Ok((result, backup, db))
 }
 
 /// Restores a backup over the save, after backing up the current state.
