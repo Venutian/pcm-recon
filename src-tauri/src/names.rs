@@ -393,3 +393,41 @@ mod live_copy_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
+
+#[cfg(test)]
+mod apply_live {
+    use super::*;
+
+    /// One-off: `PCM_APPLY_SAVE=<save> cargo test --lib apply_live -- --ignored --nocapture`
+    /// applies the Eritrea pack to the game's name list and to the given save, exactly as the app does.
+    #[test]
+    #[ignore]
+    fn apply_eritrea_pack_live() {
+        let save_path = PathBuf::from(std::env::var("PCM_APPLY_SAVE").expect("PCM_APPLY_SAVE"));
+        let app_data = PathBuf::from(std::env::var("APPDATA").unwrap()).join("com.ngen.pcm-recon");
+        let docs = PathBuf::from(std::env::var("PCM_DOCS").expect("PCM_DOCS"));
+        let p = &ERITREA_TIGRINYA;
+
+        let save = Cdb::open(&save_path.to_string_lossy()).unwrap();
+        let country = country_id(&save, p.country_iso).unwrap();
+        let start = save.ints("GAM_config", "game_i_starting_year").unwrap()[0];
+
+        let (_, list) = find_name_databases().into_iter().find(|(g, _)| g.contains("2026")).unwrap();
+        let (report, backup, db) = crate::edit::transform(&app_data, &list, |db| apply_to_lists(db, country, p)).unwrap();
+        std::fs::create_dir_all(&docs).unwrap();
+        let copy = docs.join(format!("OfficialLocal.{}.cdb", p.key));
+        std::fs::write(&copy, db.to_file_bytes().unwrap()).unwrap();
+        println!("GAME LIST {}: removed {}+{}, added {}+{}; backup {}; copy {}", list.display(),
+            report.removed_first.len(), report.removed_last.len(), report.added_first, report.added_last, backup.display(), copy.display());
+
+        let (renames, backup, _) = crate::edit::transform(&app_data, &save_path, |db| {
+            let real = base_database_for(db).map(|b| real_rider_names(&b)).unwrap_or_default();
+            assert!(!real.is_empty(), "base database not found; refusing to guess real riders");
+            rename_generated(db, p, &real, start - 19)
+        }).unwrap();
+        println!("SAVE {}: {} riders renamed; backup {}", save_path.display(), renames.len(), backup.display());
+        for r in &renames {
+            println!("  {:<28} -> {}", r.from, r.to);
+        }
+    }
+}
