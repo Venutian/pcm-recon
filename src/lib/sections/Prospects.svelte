@@ -13,6 +13,7 @@
   let q = "";
   let types: number[] = [];
   let ages: string[] = [];
+  let continent = "";
   let nation = "";
   let minPot = 0;
   let gemsOnly = false;
@@ -21,13 +22,17 @@
 
   $: myCount = $prospects.filter((c) => c.my_report).length;
   $: if (myCount === 0 && source === "mine") source = "all";
-  $: nations = [...new Set($prospects.map((c) => c.nationality))].filter((n) => n !== "Unknown").sort();
+  $: continents = [...new Set($prospects.map((c) => c.continent))].filter((n) => n && n !== "Unknown").sort();
+  // Nations follow the chosen continent; clear a nation that no longer fits.
+  $: nations = [...new Set($prospects.filter((c) => !continent || c.continent === continent).map((c) => c.nationality))].filter((n) => n !== "Unknown").sort();
+  $: if (nation && !nations.includes(nation)) nation = "";
 
   $: rows = $prospects.filter((c) => {
     if (source === "mine" && !c.my_report) return false;
     if (q && !c.name.toLowerCase().includes(q.toLowerCase())) return false;
     if (types.length && !types.includes(c.rider_type_id)) return false;
     if (ages.length && !ages.includes(c.age >= 18 ? "18+" : String(c.age))) return false;
+    if (continent && c.continent !== continent) return false;
     if (nation && c.nationality !== nation) return false;
     if (c.potential < minPot) return false;
     if (gemsOnly && gemGap(c) < 0.5) return false;
@@ -139,7 +144,8 @@
           <button class="chip" class:on={types.includes(t.id)} on:click={() => (types = toggle(types, t.id))}><span class="dot" style="background:{t.color}"></span>{t.label}</button>
         {/each}
       </div>
-      <select bind:value={nation}><option value="">All nations</option>{#each nations as n}<option>{n}</option>{/each}</select>
+      <select bind:value={continent} aria-label="Continent"><option value="">All continents</option>{#each continents as n}<option>{n}</option>{/each}</select>
+      <select bind:value={nation} aria-label="Nation"><option value="">All nations</option>{#each nations as n}<option>{n}</option>{/each}</select>
       <label class="field inline"><span>True potential ≥ {minPot.toFixed(1)}★</span><input type="range" min="0" max="6" step="0.5" bind:value={minPot} /></label>
       <label class="chk"><input type="checkbox" bind:checked={gemsOnly} /> Underrated only</label>
       <label class="chk"><input type="checkbox" bind:checked={signableOnly} /> Signable now</label>

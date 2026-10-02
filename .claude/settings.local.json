@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(where claude *)",
-      "Bash(npm list *)"
+      "Bash(npm list *)",
+      "Bash(git mv *)",
+      "Bash(git rm *)"
     ]
   }
 }

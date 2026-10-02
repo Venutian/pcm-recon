@@ -22,11 +22,10 @@
   import Teams from "./lib/sections/Teams.svelte";
   import Rankings from "./lib/sections/Rankings.svelte";
   import Database from "./lib/sections/Database.svelte";
-  import NamePacks from "./lib/sections/NamePacks.svelte";
 
   const SECTIONS: Record<string, any> = {
     Overview, Prospects, Scout, Market, Shortlist, Compare,
-    "My team": MyTeam, Finances, Teams, Rankings, Database, "Name packs": NamePacks,
+    "My team": MyTeam, Finances, Teams, Rankings, Database,
   };
   const GROUPS = ["Scouting", "Your team", "League", "Tools"] as const;
 
@@ -52,7 +51,10 @@
     if (e.key === "F5" && $save) { e.preventDefault(); reloadSave(); }
   }
 
-  $: badge = (name: string) => name === "Shortlist" ? $shortlist.size : name === "Compare" ? $compareIds.length : 0;
+  // The browser preview has no Tauri backend, so open the page in a new tab there.
+  const donate = () => (isDesktop ? openExternal(DONATE_URL) : window.open(DONATE_URL, "_blank"));
+
+  $: badge =(name: string) => name === "Shortlist" ? $shortlist.size : name === "Compare" ? $compareIds.length : 0;
   $: balance = $finance?.balance ?? 0;
 </script>
 
@@ -69,7 +71,7 @@
   <nav class="side">
     <div class="brand">
       <img class="mark" src="/logo.svg" alt="" />
-      <div><strong>PCM Recon</strong><small>v3.1</small></div>
+      <div><strong>PCM Recon</strong><small>v3.1.1</small></div>
     </div>
     {#if $save}
       {#each GROUPS as g}
@@ -93,7 +95,7 @@
         </div>
       {/if}
       {#if DONATE_URL}
-        <button class="btn btn-quiet btn-sm" on:click={() => openExternal(DONATE_URL)}>Support on Ko-fi</button>
+        <button class="coffee" on:click={donate} title="Support PCM Recon on Ko-fi"><Icon name="coffee" size={17} /><span>Buy me a coffee</span></button>
       {/if}
     </div>
   </nav>
@@ -165,6 +167,13 @@
   .file { display: flex; flex-direction: column; font-size: 12px; color: var(--ink-2); overflow: hidden; }
   .file span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .file small { color: var(--ink-4); }
+  .coffee {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 9px 12px;
+    border: none; border-radius: 8px; background: #ff5e5b; color: #fff; cursor: pointer;
+    font: inherit; font-size: 13.5px; font-weight: 600; box-shadow: 0 2px 10px #ff5e5b40;
+    transition: background 0.12s, transform 0.12s;
+  }
+  .coffee:hover { background: #ff7471; transform: translateY(-1px); }
 
   main { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   .strip {
@@ -196,7 +205,8 @@
 
   @media (max-width: 1250px) {
     .app.with-detail { grid-template-columns: 64px minmax(0, 1fr) 360px; }
-    .app.with-detail .nav span, .app.with-detail .glabel, .app.with-detail .brand div, .app.with-detail .side-foot { display: none; }
+    .app.with-detail .nav span, .app.with-detail .glabel, .app.with-detail .brand div, .app.with-detail .file, .app.with-detail .coffee span { display: none; }
+    .app.with-detail .side-foot { padding: 12px 10px 16px; }
     .app.with-detail .badge { display: none; }
   }
 </style>

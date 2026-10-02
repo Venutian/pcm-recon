@@ -1,6 +1,6 @@
 <script lang="ts">
   import { selectedRider, shortlist, notes, compareIds, toggleShortlist, toggleCompare, selectRider, teamById, meta, goTo } from "../stores";
-  import { eurShort, stars, gemGap, terrainProfile, teamColor, fmtDate } from "../format";
+  import { eurShort, stars, gemGap, terrainProfile, teamColor, fmtDate, stat } from "../format";
   import { GRADE_COLOR, GRADE_DESC, STAT_KEYS, STAT_LABELS, TYPE_COLOR, TERRAINS, SCOUT_CATS } from "../types";
   import Bib from "./Bib.svelte";
   import Flag from "./Flag.svelte";
@@ -36,7 +36,6 @@
     });
   }
 
-  function stat(k: string) { return c ? (c as unknown as Record<string, number>)[k] ?? 0 : 0; }
 </script>
 
 <div class="panel-root">
@@ -148,7 +147,8 @@
       <section>
         <div class="sec-head"><h3>Attributes</h3><span class="muted">current → ceiling</span></div>
         {#each STAT_KEYS as k}
-          <StatBar label={STAT_LABELS[k]} cur={stat(k)} pot={stat(k + "_p")} best={topKeys.has(k)} />
+          <!-- pass `c` explicitly so Svelte re-renders the bars when another rider is selected -->
+          <StatBar label={STAT_LABELS[k]} cur={stat(c, k)} pot={stat(c, `${k}_p`)} best={topKeys.has(k)} />
         {/each}
       </section>
 

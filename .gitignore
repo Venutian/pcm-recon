@@ -29,4 +29,5 @@ PCMDBEdit/PCM DBEdit By Davy.exe
 PCMDBEdit/PCM DBEdit By Davy.exe.config
 PCMDBEdit/PCM DBEdit By Davy.pdb
 .playwright-mcp/
-src-tauri/src/names.rs
+# Local-only scripts (not part of the published app)
+src-tauri/examples/eritrea_names.rs

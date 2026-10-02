@@ -177,21 +177,3 @@ async function importLegacyNotes(savePath: string) {
     return merged;
   });
 }
-
-// ─── Name packs ───────────────────────────────────────────────────────────────
-
-export interface PackInfo { key: string; label: string; first: string[]; last: string[]; }
-export interface NameDb { game: string; path: string; current_first: string[]; current_last: string[]; }
-export interface NamePacksInfo { packs: PackInfo[]; databases: NameDb[]; copies_folder: string; country_id: number; }
-export interface ListReport { removed_first: string[]; removed_last: string[]; added_first: number; added_last: number; }
-export interface Rename { id: number; from: string; to: string; }
-
-export const namePacks = (pack: string) => invoke<NamePacksInfo>("name_packs", { pack, savePath: get(save)!.meta.path });
-export const applyPackToGame = (pack: string, path: string, countryId: number) =>
-  invoke<{ report: ListReport; backup: string; copy: string }>("apply_name_pack_to_game", { pack, path, countryId });
-
-export async function applyPackToSave(pack: string): Promise<Rename[]> {
-  const res = await invoke<SaveData & { renames: Rename[]; backup: string }>("apply_name_pack_to_save", { pack, path: get(save)!.meta.path });
-  save.set(res);
-  return res.renames;
-}
