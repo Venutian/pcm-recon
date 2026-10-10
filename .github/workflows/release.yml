@@ -38,7 +38,17 @@ jobs:
           releaseBody: |
             Scouting, finances and kit editing for Pro Cycling Manager careers. Windows only.
 
-            **Install:** download `PCM Recon_..._x64-setup.exe` below and run it. The `.msi` is the same app for managed installs.
+            ![Overview](https://raw.githubusercontent.com/Venutian/pcm-recon/${{ github.ref_name }}/docs/screenshots/overview.webp)
+
+            **Install:** download `PCM Recon_..._x64-setup.exe` below and run it. The `.msi` is the same app for managed installs. If Windows says "Windows protected your PC", click **More info → Run anyway** (the app isn't code-signed).
+
+            | Prospects | Scout |
+            | --- | --- |
+            | ![Prospects](https://raw.githubusercontent.com/Venutian/pcm-recon/${{ github.ref_name }}/docs/screenshots/prospects.webp) | ![Scout](https://raw.githubusercontent.com/Venutian/pcm-recon/${{ github.ref_name }}/docs/screenshots/scout.webp) |
+            | **My team** | **Finances** |
+            | ![My team](https://raw.githubusercontent.com/Venutian/pcm-recon/${{ github.ref_name }}/docs/screenshots/my-team.webp) | ![Finances](https://raw.githubusercontent.com/Venutian/pcm-recon/${{ github.ref_name }}/docs/screenshots/finances.webp) |
+            | **Kits** | **Kit editor** |
+            | ![Kits](https://raw.githubusercontent.com/Venutian/pcm-recon/${{ github.ref_name }}/docs/screenshots/kits.webp) | ![Kit editor](https://raw.githubusercontent.com/Venutian/pcm-recon/${{ github.ref_name }}/docs/screenshots/kit-editor.webp) |
 
             See the [README](https://github.com/Venutian/pcm-recon#readme) for what it does and how to edit a save safely.
 
