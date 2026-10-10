@@ -2135,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "pcm-recon"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "flate2",
  "libloading 0.8.9",
