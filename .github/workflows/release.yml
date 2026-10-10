@@ -36,11 +36,13 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: PCM Recon ${{ github.ref_name }}
           releaseBody: |
-            Windows release for PCM Recon.
+            Scouting, finances and kit editing for Pro Cycling Manager careers. Windows only.
 
-            Included assets:
-            - NSIS setup executable
-            - MSI installer
+            **Install:** download `PCM Recon_..._x64-setup.exe` below and run it. The `.msi` is the same app for managed installs.
+
+            See the [README](https://github.com/Venutian/pcm-recon#readme) for what it does and how to edit a save safely.
+
+            Support development on [Ko-fi](https://ko-fi.com/venutian).
           releaseDraft: true
           prerelease: false
-          generateReleaseNotes: true
+          generateReleaseNotes: false

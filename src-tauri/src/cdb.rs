@@ -609,17 +609,26 @@ fn cp1252(b: u8) -> char {
     }
 }
 
+/// Save the tests run against: `PCM_SAVE`, else the first `*.cdb` in the repo root.
+/// Tests that need a real save skip when there is none.
+#[cfg(test)]
+pub(crate) fn sample_path() -> Option<String> {
+    if let Ok(p) = std::env::var("PCM_SAVE") {
+        return Some(p);
+    }
+    let mut saves: Vec<_> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("cdb")))
+        .collect();
+    saves.sort();
+    saves.first().map(|p| p.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    pub(crate) fn sample_path() -> Option<String> {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
-        ["Career_2 copy.cdb", "Career_2.cdb", "Career_1.cdb"]
-            .iter()
-            .map(|n| format!("{root}/{n}"))
-            .find(|p| std::path::Path::new(p).is_file())
-    }
 
     #[test]
     fn parses_tables_and_round_trips() {

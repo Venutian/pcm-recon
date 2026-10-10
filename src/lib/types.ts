@@ -29,7 +29,7 @@ export interface Cyclist {
 }
 
 export interface Team {
-  id: number; name: string; short: string; abbreviation: string;
+  id: number; name: string; short: string; abbreviation: string; jersey: string;
   country_iso: string; country_name: string; flag: string;
   color1: string; color2: string;
   division_id: number; division: string; tier: number;

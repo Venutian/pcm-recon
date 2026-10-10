@@ -98,6 +98,8 @@ pub struct Team {
     pub name: String,
     pub short: String,
     pub abbreviation: String,
+    /// Kit folder the game loads (`DYN_team.jersey_sz_abbreviation`).
+    pub jersey: String,
     pub country_iso: String,
     pub country_name: String,
     pub flag: String,
@@ -292,6 +294,13 @@ fn normalize_iso(raw: &str) -> String {
 }
 
 /// ISO3 (PCM flavour) → (display name, ISO 3166 alpha-2).
+/// Display name and flag-icons code for a raw `STA_country.CONSTANT`.
+pub(crate) fn country_display(raw: &str) -> (String, String) {
+    let iso = normalize_iso(raw);
+    let (name, flag) = country_info(&iso);
+    (if name.is_empty() { iso.to_uppercase() } else { name.to_string() }, flag.to_string())
+}
+
 fn country_info(iso: &str) -> (&'static str, &'static str) {
     match iso {
         "ago" => ("Angola", "ao"), "alb" => ("Albania", "al"), "and" => ("Andorra", "ad"),
@@ -560,6 +569,7 @@ pub fn extract(db: &Cdb, path: &str) -> Result<SaveData, String> {
 
     // Teams
     let tt = Rows::new(db, "DYN_team");
+    let t_jersey = tt.text("jersey_sz_abbreviation");
     let (t_ids, t_names, t_shorts, t_abbr, t_countries, t_div, t_budget, t_eval, t_c1, t_c2) = (
         tt.int("IDteam"), tt.text("gene_sz_name"), tt.text("gene_sz_shortname"), tt.text("abbreviation"),
         tt.int("fkIDcountry"), tt.int("fkIDdivision"), tt.int("value_i_budget"), tt.float("value_f_current_evaluation"),
@@ -579,6 +589,7 @@ pub fn extract(db: &Cdb, path: &str) -> Result<SaveData, String> {
             name: t_names[i].clone(),
             short: if t_shorts[i].is_empty() { t_names[i].clone() } else { t_shorts[i].clone() },
             abbreviation: t_abbr[i].clone(),
+            jersey: t_jersey[i].clone(),
             country_iso: country.iso.clone(),
             country_name: country.name.clone(),
             flag: country.flag.clone(),
@@ -882,12 +893,8 @@ mod tests {
 
     #[test]
     fn extracts_career_save() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
-        for name in ["Career_2 copy.cdb", "Career_2.cdb"] {
-            let path = format!("{root}/{name}");
-            if !std::path::Path::new(&path).is_file() {
-                continue;
-            }
+        if let Some(path) = crate::cdb::sample_path() {
+            let name = &path;
             let db = Cdb::open(&path).unwrap();
             let data = extract(&db, &path).unwrap();
             assert_eq!(data.cyclists.len(), db.rows("DYN_cyclist"));
@@ -915,12 +922,12 @@ mod tests {
 
 #[cfg(test)]
 mod dump {
-    /// `PCM_DUMP=<out.json> cargo test dump_json -- --ignored` writes the UI model for browser previews.
+    /// `PCM_DUMP=<out.json> [PCM_SAVE=<save.cdb>] cargo test dump_json -- --ignored` writes the UI model for browser previews.
     #[test]
     #[ignore]
     fn dump_json() {
         let out = std::env::var("PCM_DUMP").expect("set PCM_DUMP");
-        let src = std::env::var("PCM_SAVE").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../Career_2 copy.cdb").into());
+        let src = crate::cdb::sample_path().expect("set PCM_SAVE or put a .cdb in the repo root");
         let db = crate::cdb::Cdb::open(&src).unwrap();
         let data = super::extract(&db, &src).unwrap();
         std::fs::write(out, serde_json::to_string(&data).unwrap()).unwrap();

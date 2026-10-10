@@ -234,11 +234,7 @@ mod tests {
 
     #[test]
     fn edits_copy_with_backup() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
-        let src = format!("{root}/Career_2 copy.cdb");
-        if !Path::new(&src).is_file() {
-            return;
-        }
+        let Some(src) = crate::cdb::sample_path() else { return };
         let tmp = std::env::temp_dir().join(format!("pcmrecon-test-{}", now_ms()));
         std::fs::create_dir_all(&tmp).unwrap();
         let save = tmp.join("Career_T.cdb");

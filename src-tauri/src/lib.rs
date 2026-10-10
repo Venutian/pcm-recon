@@ -1,7 +1,11 @@
 // `cdb` and `edit` are public so local scripts in examples/ can reuse them.
 pub mod cdb;
 pub mod edit;
+mod kits;
+mod oodle;
+mod pak;
 mod parser;
+mod texture;
 
 #[cfg(target_os = "windows")]
 mod dwm {
@@ -40,6 +44,8 @@ struct Loaded {
 #[derive(Default)]
 struct AppState {
     loaded: Mutex<Option<Loaded>>,
+    /// Kit catalog for the save it was built from (reading pak indexes takes a few seconds).
+    kits: Mutex<Option<(PathBuf, std::sync::Arc<kits::Catalog>)>>,
 }
 
 fn candidate_parents() -> Vec<PathBuf> {
@@ -266,6 +272,226 @@ fn reveal(dir: &Path) -> Result<(), String> {
     Command::new(cmd).arg(dir).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+// ─── Kits ─────────────────────────────────────────────────────────────────────
+
+fn oodle_if_ready(app: &tauri::AppHandle) -> Result<Option<&'static oodle::Oodle>, String> {
+    let dll = oodle::dll_path(&app_data(app)?);
+    if dll.is_file() {
+        oodle::load(&dll).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+/// The kit catalog for `save_path`, built on first use and cached.
+fn kit_catalog(state: &AppState, save_path: &str) -> Result<std::sync::Arc<kits::Catalog>, String> {
+    let save = resolve_save_path(save_path)?;
+    if let Some((p, cat)) = state.kits.lock().map_err(|_| "State lock poisoned")?.as_ref() {
+        if *p == save {
+            return Ok(cat.clone());
+        }
+    }
+    let install = kits::find_install(&save)?;
+    let mod_pak = with_db(state, save_path, kits::find_mod_pak)?;
+    let cat = std::sync::Arc::new(kits::build_catalog(install, mod_pak)?);
+    *state.kits.lock().map_err(|_| "State lock poisoned")? = Some((save, cat.clone()));
+    Ok(cat)
+}
+
+#[derive(Serialize)]
+struct KitStatus {
+    game: String,
+    mod_label: Option<String>,
+    oodle_ready: bool,
+    override_path: String,
+    override_installed: bool,
+    /// When the override pak was last written (0 if absent), to spot edits made since.
+    override_modified_ms: u64,
+    kits: Vec<kits::KitSummary>,
+}
+
+#[tauri::command]
+async fn kit_status(app: tauri::AppHandle, state: tauri::State<'_, AppState>, save_path: String) -> Result<KitStatus, String> {
+    let cat = kit_catalog(&state, &save_path)?;
+    let p = cat.install.override_pak();
+    Ok(KitStatus {
+        game: cat.install.game.clone(),
+        mod_label: cat.mod_label.clone(),
+        oodle_ready: oodle::dll_path(&app_data(&app)?).is_file(),
+        override_path: p.to_string_lossy().into(),
+        override_installed: p.is_file(),
+        override_modified_ms: modified_ms(&p),
+        kits: cat.summaries(),
+    })
+}
+
+#[tauri::command]
+async fn kit_oodle_download(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = app_data(&app)?;
+    blocking(move || oodle::ensure_downloaded(&dir).map(|_| ())).await
+}
+
+#[tauri::command]
+fn kit_oodle_pick(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    oodle::install_from(&app_data(&app)?, Path::new(&path))
+}
+
+fn image_response(size: texture::Size, rgba: Vec<u8>) -> tauri::ipc::Response {
+    let mut out = Vec::with_capacity(8 + rgba.len());
+    out.extend_from_slice(&size.width.to_le_bytes());
+    out.extend_from_slice(&size.height.to_le_bytes());
+    out.extend_from_slice(&rgba);
+    tauri::ipc::Response::new(out)
+}
+
+/// A kit part as `u32 width, u32 height, RGBA…`; `edited` returns the user's version.
+#[tauri::command]
+async fn kit_image(app: tauri::AppHandle, state: tauri::State<'_, AppState>, save_path: String, kit: String, part: String, edited: bool) -> Result<tauri::ipc::Response, String> {
+    if edited {
+        let dir = app_data(&app)?;
+        let (size, px) = blocking(move || kits::read_edit(&dir, &kit, &part)).await?;
+        return Ok(image_response(size, px));
+    }
+    let cat = kit_catalog(&state, &save_path)?;
+    let oodle = oodle_if_ready(&app)?;
+    let (size, px) = blocking(move || cat.read_part(&kit, &part, oodle)).await?;
+    Ok(image_response(size, px))
+}
+
+#[tauri::command]
+fn kit_edits(app: tauri::AppHandle, kit: Option<String>) -> Result<Vec<kits::EditInfo>, String> {
+    Ok(kits::list_edits(&app_data(&app)?, kit.as_deref()))
+}
+
+/// Raw body: u32 recipe length, recipe JSON, RGBA pixels. Headers: kit, part, width, height.
+#[tauri::command]
+fn kit_save_edit(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).map(str::to_string).ok_or_else(|| format!("Missing {k}"));
+    let (kit, part) = (header("kit")?, header("part")?);
+    let num = |k: &str| -> Result<u32, String> { header(k)?.parse().map_err(|_| format!("Bad {k}")) };
+    let size = texture::Size { width: num("width")?, height: num("height")? };
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else { return Err("Expected raw image data".into()) };
+    let len = u32::from_le_bytes(body.get(0..4).ok_or("Empty body")?.try_into().unwrap()) as usize;
+    let recipe = std::str::from_utf8(body.get(4..4 + len).ok_or("Bad body")?).map_err(|e| e.to_string())?;
+    kits::save_edit(&app_data(&app)?, &kit, &part, recipe, size, &body[4 + len..])
+}
+
+#[tauri::command]
+fn kit_delete_edit(app: tauri::AppHandle, kit: String, part: String) -> Result<(), String> {
+    kits::delete_edit(&app_data(&app)?, &kit, &part)
+}
+
+#[tauri::command]
+fn kit_meta_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    kits::meta_get(&app_data(&app)?, &key)
+}
+
+#[tauri::command]
+fn kit_meta_set(app: tauri::AppHandle, key: String, value: Option<String>) -> Result<(), String> {
+    kits::meta_set(&app_data(&app)?, &key, value.as_deref())
+}
+
+#[tauri::command]
+async fn kit_apply(app: tauri::AppHandle, state: tauri::State<'_, AppState>, save_path: String) -> Result<kits::ApplyReport, String> {
+    let cat = kit_catalog(&state, &save_path)?;
+    let oodle = oodle_if_ready(&app)?;
+    let dir = app_data(&app)?;
+    blocking(move || kits::apply(&cat, &dir, oodle)).await
+}
+
+#[tauri::command]
+async fn kit_remove(state: tauri::State<'_, AppState>, save_path: String) -> Result<(), String> {
+    let cat = kit_catalog(&state, &save_path)?;
+    kits::remove(&cat.install)
+}
+
+#[tauri::command]
+async fn kit_squad_nations(state: tauri::State<'_, AppState>, save_path: String, team_id: i32) -> Result<Vec<kits::Nation>, String> {
+    with_db(&state, &save_path, |db| kits::squad_nations(db, team_id))
+}
+
+/// Points a team at another kit and/or changes its colours (`rrggbb`).
+#[tauri::command]
+async fn set_team_kit(app: tauri::AppHandle, state: tauri::State<'_, AppState>, path: String, team_id: i32, jersey: String, color1: String, color2: String) -> Result<EditResponse, String> {
+    let hex = |c: &str| -> Result<String, String> {
+        let c = c.trim_start_matches('#').to_lowercase();
+        if c.len() == 6 && c.chars().all(|ch| ch.is_ascii_hexdigit()) { Ok(c) } else { Err(format!("{c} isn't a colour")) }
+    };
+    let (color1, color2) = (hex(&color1)?, hex(&color2)?);
+    if jersey.is_empty() || jersey.len() > 64 {
+        return Err("Pick a kit".into());
+    }
+    let save = resolve_save_path(&path)?;
+    let data_dir = app_data(&app)?;
+    let save2 = save.clone();
+    let (outcomes, backup, db, data) = blocking(move || {
+        let (outcomes, backup, db) = edit::transform(&data_dir, &save2, |db| {
+            let t = "DYN_team";
+            let row = db.find_row_int(t, "IDteam", team_id as i64).ok_or("Team not found")?;
+            let mut outcomes = Vec::new();
+            let mut cols = Vec::new();
+            for (col, value) in [("jersey_sz_abbreviation", &jersey), ("gene_sz_color", &color1), ("gene_sz_secondary_color", &color2)] {
+                let mut v = db.raw_strings(t, col).ok_or_else(|| format!("{t}.{col} missing"))?;
+                let old = cdb::decode_text(&v[row]);
+                if old != *value {
+                    eprintln!("[set_team_kit] {col}: {old} → {value}");
+                    v[row] = cdb::encode_text(value);
+                    cols.push((col, cdb::Values::Text(v)));
+                    outcomes.push(edit::EditOutcome { table: t.into(), column: col.into(), key: team_id.to_string(), old: 0.0, new: 0.0 });
+                }
+            }
+            if cols.is_empty() {
+                return Err("Nothing to change".into());
+            }
+            db.rewrite_columns(t, &cols)?;
+            Ok(outcomes)
+        })?;
+        let data = parser::extract(&db, &save2.to_string_lossy())?;
+        Ok((outcomes, backup, db, data))
+    })
+    .await?;
+    let modified = modified_ms(&save);
+    *state.loaded.lock().map_err(|_| "State lock poisoned")? = Some(Loaded { path: save, db });
+    Ok(EditResponse { outcomes, backup: backup.to_string_lossy().into(), data, modified_ms: modified })
+}
+
+/// Reads a user-picked file (logos, imported kit images).
+#[tauri::command]
+async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    blocking(move || std::fs::read(&path).map_err(|e| format!("Cannot read {path}: {e}"))).await.map(tauri::ipc::Response::new)
+}
+
+/// Writes a user-picked PNG (kit export). Header: path.
+#[tauri::command]
+fn write_png(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let path = request.headers().get("path").and_then(|v| v.to_str().ok()).ok_or("Missing path")?;
+    let path = urlencoding_decode(path);
+    if !path.to_lowercase().ends_with(".png") {
+        return Err("Only .png files can be written".into());
+    }
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else { return Err("Expected raw data".into()) };
+    std::fs::write(&path, body).map_err(|e| format!("Cannot write {path}: {e}"))
+}
+
+/// Headers are ASCII, so the frontend percent-encodes the path.
+fn urlencoding_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 // ─── Database browser ─────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -367,6 +593,21 @@ pub fn run() {
             list_backups,
             restore_backup,
             open_backup_folder,
+            kit_status,
+            kit_oodle_download,
+            kit_oodle_pick,
+            kit_image,
+            kit_edits,
+            kit_save_edit,
+            kit_delete_edit,
+            kit_apply,
+            kit_meta_get,
+            kit_meta_set,
+            kit_remove,
+            kit_squad_nations,
+            set_team_kit,
+            read_file_bytes,
+            write_png,
             db_tables,
             db_page,
             load_workspace,

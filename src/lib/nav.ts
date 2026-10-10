@@ -9,6 +9,7 @@ export const NAV: NavItem[] = [
   { name: "Compare", icon: "compare", group: "Scouting" },
   { name: "My team", icon: "team", group: "Your team" },
   { name: "Finances", icon: "finance", group: "Your team" },
+  { name: "Kits", icon: "jersey", group: "Your team" },
   { name: "Teams", icon: "teams", group: "League" },
   { name: "Rankings", icon: "rankings", group: "League" },
   { name: "Database", icon: "database", group: "Tools" },
