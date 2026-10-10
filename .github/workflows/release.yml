@@ -52,7 +52,7 @@ jobs:
 
             See the [README](https://github.com/Venutian/pcm-recon#readme) for what it does and how to edit a save safely.
 
-            Support development on [Ko-fi](https://ko-fi.com/venutian).
+            Support development on [Ko-fi](https://ko-fi.com/ngen).
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: false

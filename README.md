@@ -91,4 +91,4 @@ cd src-tauri && cargo test   # save tests use PCM_SAVE, or a .cdb in the repo ro
 
 ## Support
 
-Support development on [Ko-fi](https://ko-fi.com/venutian).
+Support development on [Ko-fi](https://ko-fi.com/ngen).
